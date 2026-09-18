@@ -34,7 +34,7 @@ func TestGo127HTTP2BinaryMetadata(t *testing.T) {
 		"net/http/internal/http2.(*serverConn).processHeaders",
 		"net/http/internal/http2.(*serverConn).runHandler",
 	}
-	points, err := instrumentationPoints(elfFile, symbols)
+	points, err := NewInspector(elfFile).instrumentationPoints(symbols)
 	require.NoError(t, err)
 	for _, symbol := range symbols {
 		assert.Contains(t, points, symbol)

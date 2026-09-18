@@ -67,7 +67,7 @@ func main() {
 	for _, implementation := range implementations {
 		symbols = append(symbols, implementation[:]...)
 	}
-	offsets, err := instrumentationPoints(file, symbols)
+	offsets, err := NewInspector(file).instrumentationPoints(symbols)
 	require.NoError(t, err)
 	foundImplementations := 0
 	for _, implementation := range implementations {

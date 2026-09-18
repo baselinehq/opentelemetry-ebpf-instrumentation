@@ -5,7 +5,6 @@ package goexec // import "go.opentelemetry.io/obi/pkg/internal/goexec"
 
 import (
 	"bytes"
-	"debug/elf"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,10 +15,13 @@ import (
 	"go.opentelemetry.io/obi/internal/goversion"
 )
 
-func loadGoRuntimeABI(ef *elf.File, targetVersion goversion.Version) (goabi.ABI, error) {
-	return resolveGoRuntimeABI(
+func (i *Inspector) loadGoRuntimeABI(targetVersion goversion.Version) (goabi.ABI, error) {
+	if result, ok := i.abis[targetVersion]; ok {
+		return result.abi, result.err
+	}
+	abi, err := resolveGoRuntimeABI(
 		func() (goabi.ABI, error) {
-			data, err := ef.DWARF()
+			data, err := i.dwarf()
 			if err != nil {
 				return goabi.ABI{}, err
 			}
@@ -29,6 +31,11 @@ func loadGoRuntimeABI(ef *elf.File, targetVersion goversion.Version) (goabi.ABI,
 			return loadGeneratedGoRuntimeABI(targetVersion)
 		},
 	)
+	if i.abis == nil {
+		i.abis = make(map[goversion.Version]abiResult)
+	}
+	i.abis[targetVersion] = abiResult{abi, err}
+	return abi, err
 }
 
 func resolveGoRuntimeABI(

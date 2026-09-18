@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf/link"
+
 	"go.opentelemetry.io/obi/pkg/appolly/app"
 	"go.opentelemetry.io/obi/pkg/appolly/app/request"
 	"go.opentelemetry.io/obi/pkg/appolly/app/svc"
@@ -262,16 +263,36 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 		return false, nil
 	}
 
-	flavour := classify(c.procFS, pid, exePath, id, c.goTLS)
-	if flavour == tlsNone {
+	var elfFile *elf.File
+	var inspector *goexec.Inspector
+	defer func() {
+		if elfFile != nil {
+			elfFile.Close()
+		}
+	}()
+	openExecutable := func() error {
+		if elfFile != nil {
+			return nil
+		}
+		var err error
+		elfFile, err = elf.Open(exePath)
+		if err == nil {
+			inspector = goexec.NewInspector(elfFile)
+		}
+		return err
+	}
+	flavor := classify(c.procFS, pid, id, c.goTLS, func() (bool, error) {
+		if err := openExecutable(); err != nil {
+			return false, err
+		}
+		return inspector.HasGoTLS()
+	})
+	if flavor == tlsNone {
 		return false, nil
 	}
-
-	elfFile, err := elf.Open(exePath)
-	if err != nil {
+	if err := openExecutable(); err != nil {
 		return false, nil //nolint:nilerr // not a candidate, not an error
 	}
-	defer elfFile.Close()
 
 	ns, err := procs.FindNamespace(app.PID(pid))
 	if err != nil {
@@ -294,13 +315,13 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 		Type:     svc.InstrumentableGeneric,
 	}
 
-	if flavour == tlsGo {
+	if flavor == tlsGo {
 		var offsets *goexec.Offsets
 		var offErr error
 		if inodeKnown {
 			offsets = existing.Offsets
 		} else {
-			offsets, offErr = goexec.InspectHTTPOffsets(fileInfo, goFunctions(c.tracer))
+			offsets, offErr = inspector.InspectHTTPOffsets(goFunctions(c.tracer))
 		}
 		if offErr != nil {
 			slog.Debug("obicapture: crypto/tls present but offsets unreadable; skipping", "exe", exePath, "error", offErr)

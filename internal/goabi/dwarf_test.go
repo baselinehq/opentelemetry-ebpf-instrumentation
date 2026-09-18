@@ -5,6 +5,7 @@ package goabi
 
 import (
 	"debug/buildinfo"
+	"debug/dwarf"
 	"debug/elf"
 	"os"
 	"os/exec"
@@ -38,6 +39,7 @@ func TestExtractCompleteRuntimeABI(t *testing.T) {
 
 	abi, err := Extract(data, targetVersion)
 	require.NoError(t, err)
+	assertUnfilteredDWARFFacts(t, data, targetVersion, abi)
 	requirements, err := Requirements(targetVersion)
 	require.NoError(t, err)
 	assert.Len(t, abi.Facts(), len(requirements))
@@ -58,4 +60,39 @@ func TestStoreValueRejectsConflicts(t *testing.T) {
 	values := map[string]uint64{"fact": 1}
 	require.NoError(t, storeValue(values, "fact", 1))
 	require.ErrorContains(t, storeValue(values, "fact", 2), "conflicting values")
+}
+
+// Compare scoped discovery with a full traversal so linker placement changes
+// cannot silently hide runtime types or constants in another compilation unit.
+func assertUnfilteredDWARFFacts(t *testing.T, data *dwarf.Data, version goversion.Version, actual ABI) {
+	t.Helper()
+	definitions, err := requiredDefinitions(version)
+	require.NoError(t, err)
+	queries := map[string][]definition{}
+	for _, definition := range definitions {
+		name := definition.query.name()
+		queries[name] = append(queries[name], definition)
+	}
+	facts := map[string]uint64{}
+	reader := data.Reader()
+	for {
+		entry, err := reader.Next()
+		require.NoError(t, err)
+		if entry == nil {
+			break
+		}
+		name, _ := entry.Val(dwarf.AttrName).(string)
+		for _, definition := range queries[name] {
+			value, found, err := definition.query.extract(data, entry)
+			require.NoError(t, err)
+			if found {
+				require.NoError(t, storeValue(facts, definition.Key(), value))
+			}
+		}
+	}
+	actualFacts := map[string]uint64{}
+	for _, fact := range actual.Facts() {
+		actualFacts[fact.Requirement.Key()] = fact.Value
+	}
+	require.Equal(t, facts, actualFacts)
 }

@@ -47,7 +47,8 @@ func isSupportedGoBinary(elfF *elf.File) error {
 
 // instrumentationPoints loads the provided executable and looks for the addresses
 // where the start and return probes must be inserted.
-func instrumentationPoints(elfF *elf.File, funcNames []string) (map[string][]FuncOffsets, error) {
+func (i *Inspector) instrumentationPoints(funcNames []string) (map[string][]FuncOffsets, error) {
+	elfF := i.file
 	ilog := slog.With("component", "goexec.instructions")
 	ilog.Debug("searching for instrumentation points", "functions", funcNames)
 	functions := map[string]struct{}{}
@@ -55,7 +56,7 @@ func instrumentationPoints(elfF *elf.File, funcNames []string) (map[string][]Fun
 		functions[fn] = struct{}{}
 	}
 
-	symTab, err := findGoSymbolTable(elfF)
+	symTab, err := i.goSymbols()
 	if err != nil {
 		return nil, err
 	}
@@ -271,17 +272,21 @@ func analyzeFunctionOffsets(baseOffset uint64, data []byte) (FuncOffsets, error)
 	}, nil
 }
 
-func findGoSymbolTable(elfF *elf.File) (*gosym.Table, error) {
+func (i *Inspector) findGoSymbolTable() (*gosym.Table, error) {
+	elfF := i.file
 	var err error
 	var pclndat []byte
 	gopclntab := elfF.Section(".gopclntab")
+	if gopclntab == nil {
+		gopclntab = elfF.Section(".data.rel.ro.gopclntab")
+	}
 	if gopclntab != nil {
 		if pclndat, err = gopclntab.Data(); err != nil {
 			return nil, fmt.Errorf("acquiring .gopclntab data: %w", err)
 		}
 	}
 
-	runtimeText, err := findRuntimeText(elfF, gopclntab, pclndat)
+	runtimeText, err := i.findRuntimeText(gopclntab, pclndat)
 	if err != nil {
 		return nil, fmt.Errorf("finding runtime text base: %w", err)
 	}
@@ -324,10 +329,10 @@ func findGoSymbolTable(elfF *elf.File) (*gosym.Table, error) {
 //
 // Therefore we try to extract it from the moduledata struct, falling back to
 // the legacy pcHeader path only when the scan fails.
-func findRuntimeText(elfF *elf.File, gopclntab *elf.Section, pclndat []byte) (uint64, error) {
+func (i *Inspector) findRuntimeText(gopclntab *elf.Section, pclndat []byte) (uint64, error) {
 	ilog := slog.With("component", "goexec.instructions")
 
-	rt, modErr := findRuntimeTextFromModuledata(elfF, gopclntab)
+	rt, modErr := i.findRuntimeTextFromModuledata(gopclntab)
 
 	if modErr == nil {
 		ilog.Debug("runtimeText resolved from moduledata", "addr", fmt.Sprintf("0x%x", rt))
@@ -362,7 +367,8 @@ func findRuntimeText(elfF *elf.File, gopclntab *elf.Section, pclndat []byte) (ui
 //
 // Note: pcHeader points to the exact start of .gopclntab. pclntable.data points into .gopclntab
 // at the function-table offset (not necessarily the start), so we validate it as a range check.
-func findRuntimeTextFromModuledata(elfF *elf.File, gopclntab *elf.Section) (uint64, error) {
+func (i *Inspector) findRuntimeTextFromModuledata(gopclntab *elf.Section) (uint64, error) {
+	elfF := i.file
 	if elfF.Class != elf.ELFCLASS64 {
 		return 0, errors.New("moduledata scan only implemented for 64-bit ELF")
 	}
@@ -371,14 +377,14 @@ func findRuntimeTextFromModuledata(elfF *elf.File, gopclntab *elf.Section) (uint
 		return 0, errors.New("no .gopclntab section")
 	}
 
-	mdoffs, err := loadModuledataOffsets(elfF)
+	mdoffs, err := i.loadModuledataOffsets()
 	if err != nil {
 		return 0, err
 	}
 
 	relocs := buildRelocationInfo(elfF)
 
-	candidates := moduledataCandidates(elfF, gopclntab.Addr, mdoffs, relocs)
+	candidates := i.moduledataCandidates(gopclntab.Addr, mdoffs, relocs)
 
 	ilog := slog.With("component", "goexec.instructions")
 
@@ -398,7 +404,8 @@ func findRuntimeTextFromModuledata(elfF *elf.File, gopclntab *elf.Section) (uint
 	return 0, errors.New("runtime.moduledata not found")
 }
 
-func loadModuledataOffsets(elfF *elf.File) (goabi.Moduledata, error) {
+func (i *Inspector) loadModuledataOffsets() (goabi.Moduledata, error) {
+	elfF := i.file
 	versionString, _, err := getGoDetails(elfF)
 	if err != nil {
 		return goabi.Moduledata{}, fmt.Errorf("getting Go version: %w", err)
@@ -416,7 +423,7 @@ func loadModuledataOffsets(elfF *elf.File) (goabi.Moduledata, error) {
 		return abi.Moduledata, nil
 	}
 
-	abi, err := loadGoRuntimeABI(elfF, targetVersion)
+	abi, err := i.loadGoRuntimeABI(targetVersion)
 	if err != nil {
 		return goabi.Moduledata{}, err
 	}
@@ -453,7 +460,8 @@ func findRuntimeTextFromPclntab(pclndat []byte) (uint64, error) {
 
 // moduledataCandidates returns candidate virtual addresses for runtime.firstmoduledata using
 // four strategies: ELF symbol table, RELA entries, RELR entries, and a direct section scan.
-func moduledataCandidates(elfF *elf.File, gopclntabAddr uint64, mdoffs goabi.Moduledata, relocs relocationInfo) []uint64 {
+func (i *Inspector) moduledataCandidates(gopclntabAddr uint64, mdoffs goabi.Moduledata, relocs relocationInfo) []uint64 {
+	elfF := i.file
 	seen := map[uint64]struct{}{}
 	var candidates []uint64
 
@@ -477,7 +485,7 @@ func moduledataCandidates(elfF *elf.File, gopclntabAddr uint64, mdoffs goabi.Mod
 	}
 
 	// Strategy 1: symbol table (non-stripped binaries).
-	syms, _ := elfF.Symbols()
+	syms, _ := i.symbols()
 	for _, sym := range syms {
 		if sym.Name == "runtime.firstmoduledata" {
 			add(sym.Value)

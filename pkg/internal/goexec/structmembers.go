@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/grafana/go-offsets-tracker/pkg/offsets"
 	"github.com/hashicorp/go-version"
@@ -778,14 +779,16 @@ var structMembers = map[string]structInfo{
 }
 
 func structMemberOffsets(elfFile *elf.File) (FieldOffsets, error) {
-	return structMemberOffsetsFor(elfFile, structMembers)
+	return NewInspector(elfFile).structMemberOffsetsFor(structMembers)
 }
 
-func structMemberOffsetsFor(elfFile *elf.File, members map[string]structInfo) (FieldOffsets, error) {
+func (i *Inspector) structMemberOffsetsFor(members map[string]structInfo) (FieldOffsets, error) {
+	elfFile := i.file
 	// first, try to read offsets from DWARF debug info
 	var offs FieldOffsets
 	var expected map[GoOffset]struct{}
-	dwarfData, err := elfFile.DWARF()
+	dwarfData, err := i.dwarf()
+	i.dwarf = sync.OnceValues(elfFile.DWARF)
 	if err == nil {
 		offs, expected = structMemberOffsetsFromDwarfFor(dwarfData, members)
 		if len(expected) > 0 {

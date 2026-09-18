@@ -6,11 +6,14 @@
 package capture
 
 import (
+	"debug/elf"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"syscall"
 	"testing"
+
+	"go.opentelemetry.io/obi/pkg/internal/goexec"
 )
 
 func TestClassificationCache(t *testing.T) {
@@ -21,7 +24,7 @@ func TestClassificationCache(t *testing.T) {
 	id := executableIdentity(st.Sys().(*syscall.Stat_t))
 	cache := make(map[executableID]bool)
 	proc := t.TempDir()
-	if got := classify(proc, 1, "/bin/sh", id, cache); got != tlsNone {
+	if got := classifyExecutable(proc, 1, "/bin/sh", id, cache); got != tlsNone {
 		t.Fatalf("shell classified as %v", got)
 	}
 	if goTLS, ok := cache[id]; !ok || goTLS {
@@ -29,18 +32,18 @@ func TestClassificationCache(t *testing.T) {
 	}
 	// A cached positive result must not require opening the executable again.
 	cache[id] = true
-	if got := classify(proc, 1, "/missing", id, cache); got != tlsGo {
+	if got := classifyExecutable(proc, 1, "/missing", id, cache); got != tlsGo {
 		t.Fatalf("cache hit: %v", got)
 	}
 	changed := id
 	changed.changed++
-	if got := classify(proc, 1, "/missing", changed, cache); got != tlsNone {
+	if got := classifyExecutable(proc, 1, "/missing", changed, cache); got != tlsNone {
 		t.Fatalf("reused stale identity: %v", got)
 	}
 	if _, ok := cache[changed]; ok {
 		t.Fatal("transient open failure must be retried")
 	}
-	if got := classify(proc, 1, "/bin/sh", changed, cache); got != tlsNone {
+	if got := classifyExecutable(proc, 1, "/bin/sh", changed, cache); got != tlsNone {
 		t.Fatalf("retry: %v", got)
 	}
 	if _, ok := cache[changed]; !ok {
@@ -113,19 +116,19 @@ func TestCachedNonGoExecutableDiscoversLateOpenSSL(t *testing.T) {
 	}
 	cache := make(map[executableID]bool)
 	id := executableID{}
-	if got := classify(proc, 1, "/bin/sh", id, cache); got != tlsNone {
+	if got := classifyExecutable(proc, 1, "/bin/sh", id, cache); got != tlsNone {
 		t.Fatalf("before dlopen: %v", got)
 	}
 	if err := os.WriteFile(filepath.Join(proc, "1", "maps"), []byte("1000-2000 r-xp 0000 00:00 1 /libssl.so.3\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if got := classify(proc, 1, "/bin/sh", id, cache); got != tlsGeneric {
+	if got := classifyExecutable(proc, 1, "/bin/sh", id, cache); got != tlsGeneric {
 		t.Fatalf("after dlopen: %v", got)
 	}
 	if err := os.Remove(filepath.Join(proc, "1", "maps")); err != nil {
 		t.Fatal(err)
 	}
-	if got := classify(proc, 1, "/bin/sh", id, cache); got != tlsNone {
+	if got := classifyExecutable(proc, 1, "/bin/sh", id, cache); got != tlsNone {
 		t.Fatalf("after dlclose: %v", got)
 	}
 }
@@ -147,15 +150,26 @@ func BenchmarkGoTLSClassification(b *testing.B) {
 		}
 		b.Run(name, func(b *testing.B) {
 			cache := make(map[executableID]bool)
-			classify("/proc", int32(os.Getpid()), path, id, cache)
+			classifyExecutable("/proc", int32(os.Getpid()), path, id, cache)
 			b.ReportAllocs()
 			b.ResetTimer()
 			for b.Loop() {
 				if !cached {
 					clear(cache)
 				}
-				classify("/proc", int32(os.Getpid()), path, id, cache)
+				classifyExecutable("/proc", int32(os.Getpid()), path, id, cache)
 			}
 		})
 	}
+}
+
+func classifyExecutable(procFS string, pid int32, exePath string, id executableID, cache map[executableID]bool) tlsFlavour {
+	return classify(procFS, pid, id, cache, func() (bool, error) {
+		file, err := elf.Open(exePath)
+		if err != nil {
+			return false, err
+		}
+		defer file.Close()
+		return goexec.NewInspector(file).HasGoTLS()
+	})
 }

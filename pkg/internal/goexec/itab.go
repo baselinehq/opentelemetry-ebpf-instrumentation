@@ -39,9 +39,10 @@ func iTabType(sym string) string {
 	return parts[0]
 }
 
-func findInterfaceImpls(ef *elf.File, wanted ...string) (map[string]uint64, error) {
+func (i *Inspector) findInterfaceImpls(wanted ...string) (map[string]uint64, error) {
+	ef := i.file
 	implementations := map[string]uint64{}
-	symbols, err := ef.Symbols()
+	symbols, err := i.symbols()
 	if err != nil {
 		if !errors.Is(err, elf.ErrNoSymbols) {
 			return nil, fmt.Errorf("accessing symbols table: %w", err)
@@ -67,7 +68,7 @@ func findInterfaceImpls(ef *elf.File, wanted ...string) (map[string]uint64, erro
 		return implementations, nil
 	}
 
-	moduleImplementations, err := findInterfaceImplsFromModuledata(ef, targetVersion, wanted...)
+	moduleImplementations, err := i.findInterfaceImplsFromModuledata(targetVersion, wanted...)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +76,8 @@ func findInterfaceImpls(ef *elf.File, wanted ...string) (map[string]uint64, erro
 	return implementations, nil
 }
 
-func findInterfaceImplsFromModuledata(ef *elf.File, targetVersion goversion.Version, wanted ...string) (map[string]uint64, error) {
+func (i *Inspector) findInterfaceImplsFromModuledata(targetVersion goversion.Version, wanted ...string) (map[string]uint64, error) {
+	ef := i.file
 	if ef.Class != elf.ELFCLASS64 {
 		return nil, errors.New("go runtime metadata discovery only supports 64-bit ELF")
 	}
@@ -85,7 +87,7 @@ func findInterfaceImplsFromModuledata(ef *elf.File, targetVersion goversion.Vers
 		return nil, errors.New("no .gopclntab section")
 	}
 
-	runtimeABI, err := loadGoRuntimeABI(ef, targetVersion)
+	runtimeABI, err := i.loadGoRuntimeABI(targetVersion)
 	if err != nil {
 		return nil, err
 	}
@@ -95,7 +97,7 @@ func findInterfaceImplsFromModuledata(ef *elf.File, targetVersion goversion.Vers
 		return nil, errors.New("go runtime type metadata ABI is unavailable")
 	}
 	relocs := buildRelocationInfo(ef)
-	for _, candidate := range moduledataCandidates(ef, gopclntab.Addr, mdoffs, relocs) {
+	for _, candidate := range i.moduledataCandidates(gopclntab.Addr, mdoffs, relocs) {
 		if !inWritableSection(ef, candidate) {
 			continue
 		}

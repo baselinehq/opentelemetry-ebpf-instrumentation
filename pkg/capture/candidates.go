@@ -7,7 +7,6 @@ package capture
 
 import (
 	"debug/elf"
-	"debug/gosym"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -16,10 +15,8 @@ import (
 )
 
 const (
-	goTLSWriteSymbol = "crypto/tls.(*Conn).Write"
-	goTLSReadSymbol  = "crypto/tls.(*Conn).Read"
-	sslWriteSymbol   = "SSL_write"
-	sslReadSymbol    = "SSL_read"
+	sslWriteSymbol = "SSL_write"
+	sslReadSymbol  = "SSL_read"
 )
 
 type tlsFlavour uint8
@@ -39,11 +36,11 @@ func executableIdentity(st *syscall.Stat_t) executableID {
 	return executableID{inodeKey{uint64(st.Dev), st.Ino}, st.Size, st.Mtim.Nano(), st.Ctim.Nano()}
 }
 
-func classify(procFS string, pid int32, exePath string, id executableID, cache map[executableID]bool) tlsFlavour {
+func classify(procFS string, pid int32, id executableID, cache map[executableID]bool, hasGoTLS func() (bool, error)) tlsFlavour {
 	goTLS, known := cache[id]
 	if !known {
 		var err error
-		goTLS, err = hasGoTLSSymbols(exePath)
+		goTLS, err = hasGoTLS()
 		if err == nil {
 			cache[id] = goTLS
 		}
@@ -56,37 +53,6 @@ func classify(procFS string, pid int32, exePath string, id executableID, cache m
 		return tlsGeneric
 	}
 	return tlsNone
-}
-
-func hasGoTLSSymbols(path string) (bool, error) {
-	f, err := elf.Open(path)
-	if err != nil {
-		return false, err
-	}
-	defer f.Close()
-
-	syms, err := f.Symbols()
-	if err == nil {
-		return elfHasAll(syms, goTLSWriteSymbol, goTLSReadSymbol), nil
-	}
-	// Stripped Go executables retain the runtime function table.
-	text := f.Section(".text")
-	pcln := f.Section(".gopclntab")
-	if pcln == nil {
-		pcln = f.Section(".data.rel.ro.gopclntab")
-	}
-	if text == nil || pcln == nil {
-		return false, nil
-	}
-	data, err := pcln.Data()
-	if err != nil {
-		return false, err
-	}
-	table, err := gosym.NewTable(nil, gosym.NewLineTable(data, text.Addr))
-	if err != nil {
-		return false, err
-	}
-	return table.LookupFunc(goTLSWriteSymbol) != nil && table.LookupFunc(goTLSReadSymbol) != nil, nil
 }
 
 func mapsLibSSL(procFS string, pid int32) bool {

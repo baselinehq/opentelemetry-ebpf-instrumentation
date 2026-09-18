@@ -69,7 +69,7 @@ func TestFindInterfaceImplsFromGo127Moduledata(t *testing.T) {
 	)
 	t.Cleanup(func() { require.NoError(t, elfFile.Close()) })
 
-	implementations, err := findInterfaceImpls(elfFile)
+	implementations, err := NewInspector(elfFile).findInterfaceImpls()
 	require.NoError(t, err)
 	for _, typeName := range []string{
 		"*main.workerImpl",
@@ -99,7 +99,7 @@ func TestFindInterfaceImplsWithUngeneratedVersionAndCompatibleDWARF(t *testing.T
 
 	// The future label verifies that dynamic discovery does not depend on generated
 	// coverage. The DWARF comes from the current toolchain, so this does not model a future ABI.
-	implementations, err := findInterfaceImplsFromModuledata(elfFile, goversion.MustParse("go999.0.0"))
+	implementations, err := NewInspector(elfFile).findInterfaceImplsFromModuledata(goversion.MustParse("go999.0.0"))
 	require.NoError(t, err)
 	assert.NotZero(t, implementations["*main.workerImpl"])
 	assert.NotZero(t, implementations["go.opentelemetry.io/otel/trace.attributeOption"])
@@ -137,7 +137,7 @@ func TestFindInterfaceImplsRejectsUngeneratedVersionWithoutDWARF(t *testing.T) {
 	)
 	t.Cleanup(func() { require.NoError(t, elfFile.Close()) })
 
-	_, err := findInterfaceImplsFromModuledata(elfFile, goversion.MustParse("go999.0.0"))
+	_, err := NewInspector(elfFile).findInterfaceImplsFromModuledata(goversion.MustParse("go999.0.0"))
 	require.ErrorContains(t, err, "DWARF discovery")
 	require.ErrorContains(t, err, "generated fallback")
 	require.ErrorContains(t, err, "runtime ABI is not generated")
@@ -180,7 +180,7 @@ func TestFindGRPCInterfaceImplsFromGo127Moduledata(t *testing.T) {
 		t.Skip("Go 1.27 moduledata is not available")
 	}
 
-	implementations, err := findInterfaceImpls(smallGRPCElf)
+	implementations, err := NewInspector(smallGRPCElf).findInterfaceImpls()
 	require.NoError(t, err)
 	assert.NotZero(t, implementations["*google.golang.org/grpc/internal/credentials.syscallConn"])
 	assert.NotZero(t, implementations["*crypto/tls.Conn"])

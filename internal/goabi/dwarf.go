@@ -121,6 +121,15 @@ func readDWARF(data *dwarf.Data, requested []definition) (map[string]uint64, err
 			break
 		}
 		name, _ := entry.Val(dwarf.AttrName).(string)
+		// Go links synthesized runtime types into runtime's compilation unit;
+		// constants and other ABI declarations also live in internal/abi.
+		if entry.Tag == dwarf.TagCompileUnit {
+			const dwarfLanguageGo = 0x16
+			if language, ok := entry.Val(dwarf.AttrLanguage).(int64); ok && language == dwarfLanguageGo && name != "runtime" && name != "internal/abi" {
+				reader.SkipChildren()
+			}
+			continue
+		}
 		for _, definition := range queries[name] {
 			value, found, err := definition.query.extract(data, entry)
 			if err != nil {

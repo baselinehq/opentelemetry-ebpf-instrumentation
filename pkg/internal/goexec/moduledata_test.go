@@ -224,7 +224,7 @@ func buildTestELF(t *testing.T, pclntableData uint64, goVersions ...string) *elf
 func TestLoadModuledataOffsets(t *testing.T) {
 	elfF := buildTestELF(t, testGopclntabVMA, "go1.26.4")
 
-	actual, err := loadModuledataOffsets(elfF)
+	actual, err := NewInspector(elfF).loadModuledataOffsets()
 	require.NoError(t, err)
 	require.Equal(t, testMDOffsets, actual)
 }
@@ -232,7 +232,7 @@ func TestLoadModuledataOffsets(t *testing.T) {
 func TestLoadGo127ModuledataOffsets(t *testing.T) {
 	elfF := buildTestELF(t, testGopclntabVMA, "go1.27.0")
 
-	actual, err := loadModuledataOffsets(elfF)
+	actual, err := NewInspector(elfF).loadModuledataOffsets()
 	require.NoError(t, err)
 	require.Equal(t, goabi.Moduledata{
 		PCHeader:    testMDPcHeader,
@@ -253,7 +253,7 @@ func TestLoadModuledataOffsetsRejectsInvalidGoVersion(t *testing.T) {
 
 	var err error
 	require.NotPanics(t, func() {
-		_, err = loadModuledataOffsets(elfF)
+		_, err = NewInspector(elfF).loadModuledataOffsets()
 	})
 	require.ErrorContains(t, err, "unsupported Go version: unknown")
 }
@@ -328,7 +328,7 @@ func TestModuledataCandidates_StrategySectionScan(t *testing.T) {
 	// twice (at pcHeader and pclntable offsets), giving the scanner two shots at
 	// deriving testDataVMA.
 	elfF := buildTestELF(t, testGopclntabVMA)
-	candidates := moduledataCandidates(elfF, testGopclntabVMA, testMDOffsets, emptyRelocs())
+	candidates := NewInspector(elfF).moduledataCandidates(testGopclntabVMA, testMDOffsets, emptyRelocs())
 	require.Contains(t, candidates, testDataVMA)
 }
 
@@ -345,7 +345,7 @@ func TestModuledataCandidates_StrategyRELA(t *testing.T) {
 		relr: map[uint64]struct{}{},
 	}
 
-	candidates := moduledataCandidates(elfF, testGopclntabVMA, testMDOffsets, relocs)
+	candidates := NewInspector(elfF).moduledataCandidates(testGopclntabVMA, testMDOffsets, relocs)
 	require.Contains(t, candidates, testDataVMA)
 }
 
@@ -364,7 +364,7 @@ func TestModuledataCandidates_StrategyRELR(t *testing.T) {
 			testDataVMA + testMDPclntable: {}, // pclntable.data field is RELR-backed
 		},
 	}
-	candidates := moduledataCandidates(elfF, testGopclntabVMA, testMDOffsets, relocs)
+	candidates := NewInspector(elfF).moduledataCandidates(testGopclntabVMA, testMDOffsets, relocs)
 	require.Contains(t, candidates, testDataVMA)
 }
 
@@ -383,7 +383,7 @@ func TestModuledataCandidates_Deduplication(t *testing.T) {
 		relr: map[uint64]struct{}{},
 	}
 
-	candidates := moduledataCandidates(elfF, testGopclntabVMA, testMDOffsets, relocs)
+	candidates := NewInspector(elfF).moduledataCandidates(testGopclntabVMA, testMDOffsets, relocs)
 
 	count := 0
 	for _, c := range candidates {
@@ -411,7 +411,7 @@ func TestModuledataPipeline_CgoPIE(t *testing.T) {
 		},
 	}
 
-	candidates := moduledataCandidates(elfF, testGopclntabVMA, testMDOffsets, relocs)
+	candidates := NewInspector(elfF).moduledataCandidates(testGopclntabVMA, testMDOffsets, relocs)
 	require.Contains(t, candidates, testDataVMA, "candidate should be generated via RELR strategy")
 
 	text, ok := validateModuledata(elfF, testDataVMA, testGopclntabVMA, testGopclntabSz, testMDOffsets, relocs)

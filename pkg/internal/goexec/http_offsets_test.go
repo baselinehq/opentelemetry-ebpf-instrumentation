@@ -20,20 +20,28 @@ var httpInspectionFunctions = []string{
 }
 
 func TestInspectHTTPOffsets(t *testing.T) {
-	for _, stripped := range []bool{false, true} {
-		name := "debug"
-		var args []string
-		if stripped {
-			name = "stripped"
-			args = []string{"-ldflags", "-s -w"}
-		}
+	for _, tc := range []struct {
+		name     string
+		stripped bool
+		args     []string
+	}{
+		{name: "debug"},
+		{name: "stripped", stripped: true, args: []string{"-ldflags", "-s -w"}},
+		{name: "pie", args: []string{"-buildmode=pie"}},
+		{name: "pie-stripped", stripped: true, args: []string{"-buildmode=pie", "-ldflags", "-s -w"}},
+	} {
+		name, stripped, args := tc.name, tc.stripped, tc.args
 		t.Run(name, func(t *testing.T) {
 			f := compileELF(tools.ProjectDir()+"/internal/test/cmd/pingserver/server.go", args...)
 			defer f.Close()
 			info := exec.New(exec.Init{ELF: f})
 			full, err := InspectOffsets(info, httpInspectionFunctions)
 			require.NoError(t, err)
-			got, err := InspectHTTPOffsets(info, httpInspectionFunctions)
+			inspector := NewInspector(f)
+			isTLS, err := inspector.HasGoTLS()
+			require.NoError(t, err)
+			require.True(t, isTLS)
+			got, err := inspector.InspectHTTPOffsets(httpInspectionFunctions)
 			require.NoError(t, err)
 			require.Equal(t, full.Funcs, got.Funcs)
 			for _, field := range []GoOffset{

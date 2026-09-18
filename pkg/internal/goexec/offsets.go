@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"go.opentelemetry.io/obi/pkg/appolly/discover/exec"
 )
@@ -80,12 +81,23 @@ func (o *Offsets) SupportsGoAutoSDKActivation() bool {
 // InspectOffsets gets the memory addresses/offsets of the instrumenting function, as well as the required
 // parameters fields to be read from the eBPF code
 func InspectOffsets(execElf *exec.FileInfo, funcs []string) (*Offsets, error) {
-	return inspectOffsets(execElf, funcs, structMembers, nil)
+	if execElf == nil {
+		return nil, errors.New("executable not found")
+	}
+	return NewInspector(execElf.ELF()).inspectOffsets(funcs, structMembers, nil)
 }
 
 // InspectHTTPOffsets retains the layout and interface metadata used by HTTP/TLS
 // probes without inspecting unrelated protocol, SDK or runtime-metric fields.
 func InspectHTTPOffsets(execElf *exec.FileInfo, funcs []string) (*Offsets, error) {
+	if execElf == nil {
+		return nil, errors.New("executable not found")
+	}
+	return NewInspector(execElf.ELF()).InspectHTTPOffsets(funcs)
+}
+
+// InspectHTTPOffsets reuses metadata loaded while classifying this executable.
+func (i *Inspector) InspectHTTPOffsets(funcs []string) (*Offsets, error) {
 	members := map[string]structInfo{}
 	for name, member := range structMembers {
 		if strings.HasPrefix(name, "net/http.") || strings.HasPrefix(name, "net/http/") ||
@@ -95,32 +107,40 @@ func InspectHTTPOffsets(execElf *exec.FileInfo, funcs []string) (*Offsets, error
 			members[name] = member
 		}
 	}
-	return inspectOffsets(execElf, funcs, members, []string{"*crypto/tls.Conn", "*errors.errorString"})
+	return i.inspectOffsets(funcs, members, []string{"*crypto/tls.Conn", "*errors.errorString"})
 }
 
-func inspectOffsets(execElf *exec.FileInfo, funcs []string, members map[string]structInfo, interfaceTypes []string) (*Offsets, error) {
-	if execElf == nil {
+func (i *Inspector) inspectOffsets(funcs []string, members map[string]structInfo, interfaceTypes []string) (*Offsets, error) {
+	if i.file == nil {
 		return nil, errors.New("executable not found")
 	}
 
+	defer func() {
+		i.dwarf = sync.OnceValues(i.file.DWARF)
+		i.abis = nil
+	}()
+
 	// Analyze executable ELF file and find instrumentation points
-	found, err := instrumentationPoints(execElf.ELF(), funcs)
+	found, err := i.instrumentationPoints(funcs)
+	i.goSymbols = sync.OnceValues(i.findGoSymbolTable)
 	if err != nil {
 		return nil, fmt.Errorf("finding instrumentation points: %w", err)
 	}
 	if len(found) == 0 {
-		return nil, fmt.Errorf("couldn't find any instrumentation point in %s", execElf.CmdExePath())
+		return nil, errors.New("couldn't find any instrumentation point")
 	}
 
-	// check the offsets of the required fields from the method arguments
-	structFieldOffsets, err := structMemberOffsetsFor(execElf.ELF(), members)
-	if err != nil {
-		return nil, fmt.Errorf("checking struct members in file %s: %w", execElf.ProExeLinkPath(), err)
-	}
-
-	itypes, err := findInterfaceImpls(execElf.ELF(), interfaceTypes...)
+	itypes, err := i.findInterfaceImpls(interfaceTypes...)
+	i.symbols = sync.OnceValues(i.readSymbols)
 	if err != nil {
 		slog.Warn("error reading itab section in Go program, manual spans will not work", "error", err)
+	}
+
+	// Release function/symbol tables before walking struct layouts. Only DWARF
+	// is shared with this final stage; retaining all tables raises peak RSS.
+	structFieldOffsets, err := i.structMemberOffsetsFor(members)
+	if err != nil {
+		return nil, fmt.Errorf("checking struct members: %w", err)
 	}
 
 	return &Offsets{
