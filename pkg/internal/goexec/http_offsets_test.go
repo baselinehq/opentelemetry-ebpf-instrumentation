@@ -57,11 +57,17 @@ func TestInspectHTTPOffsets(t *testing.T) {
 				require.Equal(t, full.Field[field], value, "field %d", field)
 			}
 			require.Contains(t, got.Field, ScConnPos)
+			expectedTypes := map[string]uint64{}
 			for _, name := range []string{"*crypto/tls.Conn", "*errors.errorString"} {
-				require.Contains(t, full.ITypes, name)
-				require.Equal(t, full.ITypes[name], got.ITypes[name], name)
+				if address, found := full.ITypes[name]; found {
+					expectedTypes[name] = address
+				}
 			}
-			require.Len(t, got.ITypes, 2)
+			// Stripped binaries before Go 1.27 do not expose these itab identities.
+			require.Equal(t, expectedTypes, got.ITypes)
+			if !stripped {
+				require.Len(t, got.ITypes, 2)
+			}
 			require.NotContains(t, got.Field, RuntimeMemstatsNumGCPos)
 			require.NotContains(t, got.Field, SpanContextTraceIDPos)
 			require.NotContains(t, got.Field, GrpcStreamMethodPtrPos)
