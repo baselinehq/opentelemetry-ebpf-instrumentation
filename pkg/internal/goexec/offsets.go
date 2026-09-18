@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"go.opentelemetry.io/obi/pkg/appolly/discover/exec"
 )
@@ -79,6 +80,25 @@ func (o *Offsets) SupportsGoAutoSDKActivation() bool {
 // InspectOffsets gets the memory addresses/offsets of the instrumenting function, as well as the required
 // parameters fields to be read from the eBPF code
 func InspectOffsets(execElf *exec.FileInfo, funcs []string) (*Offsets, error) {
+	return inspectOffsets(execElf, funcs, structMembers, nil)
+}
+
+// InspectHTTPOffsets retains the layout and interface metadata used by HTTP/TLS
+// probes without inspecting unrelated protocol, SDK or runtime-metric fields.
+func InspectHTTPOffsets(execElf *exec.FileInfo, funcs []string) (*Offsets, error) {
+	members := map[string]structInfo{}
+	for name, member := range structMembers {
+		if strings.HasPrefix(name, "net/http.") || strings.HasPrefix(name, "net/http/") ||
+			strings.HasPrefix(name, "golang.org/x/net/http2.") || strings.HasPrefix(name, "net.") ||
+			strings.HasPrefix(name, "net/url.") || strings.HasPrefix(name, "net/textproto.") ||
+			strings.HasPrefix(name, "bufio.") {
+			members[name] = member
+		}
+	}
+	return inspectOffsets(execElf, funcs, members, []string{"*crypto/tls.Conn", "*errors.errorString"})
+}
+
+func inspectOffsets(execElf *exec.FileInfo, funcs []string, members map[string]structInfo, interfaceTypes []string) (*Offsets, error) {
 	if execElf == nil {
 		return nil, errors.New("executable not found")
 	}
@@ -93,12 +113,12 @@ func InspectOffsets(execElf *exec.FileInfo, funcs []string) (*Offsets, error) {
 	}
 
 	// check the offsets of the required fields from the method arguments
-	structFieldOffsets, err := structMemberOffsets(execElf.ELF())
+	structFieldOffsets, err := structMemberOffsetsFor(execElf.ELF(), members)
 	if err != nil {
 		return nil, fmt.Errorf("checking struct members in file %s: %w", execElf.ProExeLinkPath(), err)
 	}
 
-	itypes, err := findInterfaceImpls(execElf.ELF())
+	itypes, err := findInterfaceImpls(execElf.ELF(), interfaceTypes...)
 	if err != nil {
 		slog.Warn("error reading itab section in Go program, manual spans will not work", "error", err)
 	}

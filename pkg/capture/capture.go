@@ -300,7 +300,7 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 		if inodeKnown {
 			offsets = existing.Offsets
 		} else {
-			offsets, offErr = goexec.InspectOffsets(fileInfo, goFunctions(c.tracer))
+			offsets, offErr = goexec.InspectHTTPOffsets(fileInfo, goFunctions(c.tracer))
 		}
 		if offErr != nil {
 			slog.Debug("obicapture: crypto/tls present but offsets unreadable; skipping", "exe", exePath, "error", offErr)

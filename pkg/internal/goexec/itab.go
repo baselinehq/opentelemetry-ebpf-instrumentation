@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"go.opentelemetry.io/obi/internal/goabi"
@@ -38,7 +39,7 @@ func iTabType(sym string) string {
 	return parts[0]
 }
 
-func findInterfaceImpls(ef *elf.File) (map[string]uint64, error) {
+func findInterfaceImpls(ef *elf.File, wanted ...string) (map[string]uint64, error) {
 	implementations := map[string]uint64{}
 	symbols, err := ef.Symbols()
 	if err != nil {
@@ -52,7 +53,7 @@ func findInterfaceImpls(ef *elf.File) (map[string]uint64, error) {
 			continue
 		}
 		iType := iTabType(s.Name)
-		if iType != "" {
+		if iType != "" && (len(wanted) == 0 || slices.Contains(wanted, iType)) {
 			implementations[iType] = s.Value
 		}
 	}
@@ -66,7 +67,7 @@ func findInterfaceImpls(ef *elf.File) (map[string]uint64, error) {
 		return implementations, nil
 	}
 
-	moduleImplementations, err := findInterfaceImplsFromModuledata(ef, targetVersion)
+	moduleImplementations, err := findInterfaceImplsFromModuledata(ef, targetVersion, wanted...)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +75,7 @@ func findInterfaceImpls(ef *elf.File) (map[string]uint64, error) {
 	return implementations, nil
 }
 
-func findInterfaceImplsFromModuledata(ef *elf.File, targetVersion goversion.Version) (map[string]uint64, error) {
+func findInterfaceImplsFromModuledata(ef *elf.File, targetVersion goversion.Version, wanted ...string) (map[string]uint64, error) {
 	if ef.Class != elf.ELFCLASS64 {
 		return nil, errors.New("go runtime metadata discovery only supports 64-bit ELF")
 	}
@@ -102,7 +103,7 @@ func findInterfaceImplsFromModuledata(ef *elf.File, targetVersion goversion.Vers
 			continue
 		}
 
-		return readGoInterfaceImpls(ef, candidate, mdoffs, metadata, relocs)
+		return readGoInterfaceImpls(ef, candidate, mdoffs, metadata, relocs, wanted...)
 	}
 
 	return nil, errors.New("runtime.moduledata not found")
@@ -114,6 +115,7 @@ func readGoInterfaceImpls(
 	mdoffs goabi.Moduledata,
 	abi *goabi.TypeMetadata,
 	relocs relocationInfo,
+	wanted ...string,
 ) (map[string]uint64, error) {
 	types := resolveAddr(ef, moduledata+mdoffs.Types, relocs)
 	typeDescLen := readAddr(ef, moduledata+mdoffs.TypeDescLen)
@@ -146,7 +148,7 @@ func readGoInterfaceImpls(
 		if err != nil {
 			return nil, err
 		}
-		if typeName != "" {
+		if typeName != "" && (len(wanted) == 0 || slices.Contains(wanted, typeName)) {
 			implementations[typeName] = itabAddr
 		}
 

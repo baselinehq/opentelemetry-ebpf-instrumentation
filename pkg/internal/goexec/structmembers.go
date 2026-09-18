@@ -778,12 +778,16 @@ var structMembers = map[string]structInfo{
 }
 
 func structMemberOffsets(elfFile *elf.File) (FieldOffsets, error) {
+	return structMemberOffsetsFor(elfFile, structMembers)
+}
+
+func structMemberOffsetsFor(elfFile *elf.File, members map[string]structInfo) (FieldOffsets, error) {
 	// first, try to read offsets from DWARF debug info
 	var offs FieldOffsets
 	var expected map[GoOffset]struct{}
 	dwarfData, err := elfFile.DWARF()
 	if err == nil {
-		offs, expected = structMemberOffsetsFromDwarf(dwarfData)
+		offs, expected = structMemberOffsetsFromDwarfFor(dwarfData, members)
 		if len(expected) > 0 {
 			log().Debug("Fields not found in the DWARF file", "fields", expected)
 		} else {
@@ -803,7 +807,7 @@ func structMemberOffsets(elfFile *elf.File) (FieldOffsets, error) {
 	log().Debug("Can't read all offsets from DWARF info. Checking in prefetched database")
 
 	// if it is not possible, query from prefetched offsets
-	return structMemberPreFetchedOffsets(elfFile, offs)
+	return structMemberPreFetchedOffsetsFor(elfFile, offs, members)
 }
 
 func offsetsForLibVersions(fieldOffsets FieldOffsets, libVersions map[string]string, log *slog.Logger) FieldOffsets {
@@ -928,6 +932,10 @@ func cleanLibVersion(version string, found bool, lib string, log *slog.Logger) s
 }
 
 func structMemberPreFetchedOffsets(elfFile *elf.File, fieldOffsets FieldOffsets) (FieldOffsets, error) {
+	return structMemberPreFetchedOffsetsFor(elfFile, fieldOffsets, structMembers)
+}
+
+func structMemberPreFetchedOffsetsFor(elfFile *elf.File, fieldOffsets FieldOffsets, members map[string]structInfo) (FieldOffsets, error) {
 	log := log().With("function", "structMemberPreFetchedOffsets")
 	offs, err := offsets.Read(bytes.NewBufferString(prefetchedOffsets))
 	if err != nil {
@@ -941,7 +949,7 @@ func structMemberPreFetchedOffsets(elfFile *elf.File, fieldOffsets FieldOffsets)
 	setGoAutoSDKActivationSupport(fieldOffsets, libVersions, elfFile)
 	// after putting the offsets.json in a Go structure, we search all the
 	// structMembers elements on it, to get the annotated offsets
-	for strName, strInfo := range structMembers {
+	for strName, strInfo := range members {
 		version, ok := libVersions.versions[strInfo.lib]
 		version = cleanLibVersion(version, ok, strInfo.lib, log)
 		for fieldName, constantName := range strInfo.fields {
@@ -964,9 +972,11 @@ func structMemberPreFetchedOffsets(elfFile *elf.File, fieldOffsets FieldOffsets)
 		}
 	}
 	version, ok := libVersions.versions["go"]
-	resolveNestedStructPreFetchedOffsets(
-		offs, fieldOffsets, cleanLibVersion(version, ok, "go", log), log,
-	)
+	if _, runtimeFields := members["runtime.schedt"]; runtimeFields {
+		resolveNestedStructPreFetchedOffsets(
+			offs, fieldOffsets, cleanLibVersion(version, ok, "go", log), log,
+		)
+	}
 	return fieldOffsets, nil
 }
 
@@ -1043,18 +1053,33 @@ func alignRuntimeOffset(offset, alignment uint64) uint64 {
 // structMemberOffsetsFromDwarf reads the executable dwarf information to get
 // the offsets specified in the structMembers map
 func structMemberOffsetsFromDwarf(data *dwarf.Data) (FieldOffsets, map[GoOffset]struct{}) {
+	return structMemberOffsetsFromDwarfFor(data, structMembers)
+}
+
+func structMemberOffsetsFromDwarfFor(data *dwarf.Data, members map[string]structInfo) (FieldOffsets, map[GoOffset]struct{}) {
 	log := log().With("function", "structMemberOffsetsFromDwarf")
 	expectedReturns := map[GoOffset]struct{}{}
-	for _, str := range structMembers {
+	for _, str := range members {
 		for _, ctName := range str.fields {
 			expectedReturns[ctName] = struct{}{}
 		}
 	}
 	for _, field := range nestedRuntimeFields {
-		expectedReturns[field.offset] = struct{}{}
+		if _, needed := members[field.parentType]; needed {
+			expectedReturns[field.offset] = struct{}{}
+		}
 	}
 	log.Debug("searching offests for field constants", "constants", expectedReturns)
 
+	// Go's linker places synthesized types in runtime's compilation unit.
+	// Also keep the defining packages for toolchains that emit types there.
+	const dwarfLanguageGo = 0x16
+	packages := map[string]bool{"runtime": true}
+	for name := range members {
+		if dot := strings.LastIndexByte(name, '.'); dot >= 0 {
+			packages[name[:dot]] = true
+		}
+	}
 	fieldOffsets := FieldOffsets{}
 	reader := data.Reader()
 	for {
@@ -1066,6 +1091,15 @@ func structMemberOffsetsFromDwarf(data *dwarf.Data) (FieldOffsets, map[GoOffset]
 		if entry == nil { // END of dwarf data
 			return fieldOffsets, expectedReturns
 		}
+		if entry.Tag == dwarf.TagCompileUnit {
+			name, _ := entry.Val(dwarf.AttrName).(string)
+			// DW_LANG_Go is 0x16. Skipping a CU seeks directly to its end;
+			// skipping individual functions can still decode all their children.
+			if language, ok := entry.Val(dwarf.AttrLanguage).(int64); ok && language == dwarfLanguageGo && !packages[name] {
+				reader.SkipChildren()
+			}
+			continue
+		}
 		if entry.Tag != dwarf.TagStructType {
 			continue
 		}
@@ -1075,7 +1109,7 @@ func structMemberOffsetsFromDwarf(data *dwarf.Data) (FieldOffsets, map[GoOffset]
 			reader.SkipChildren()
 			continue
 		}
-		structMember, ok := structMembers[typeName]
+		structMember, ok := members[typeName]
 		if !ok {
 			reader.SkipChildren()
 			continue
