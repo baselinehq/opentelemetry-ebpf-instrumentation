@@ -13,11 +13,39 @@ import (
 	"github.com/cilium/ebpf"
 )
 
+type StatsNetworkIoDirection uint8
+
+const (
+	StatsNetworkIoDirectionDirectionReceive  StatsNetworkIoDirection = 1
+	StatsNetworkIoDirectionDirectionTransmit StatsNetworkIoDirection = 2
+)
+
+type StatsStatType uint8
+
+const (
+	StatsStatTypeK_statTypeTcpRtt              StatsStatType = 1
+	StatsStatTypeK_statTypeTcpFailedConnection StatsStatType = 2
+	StatsStatTypeK_statTypeTcpRetransmit       StatsStatType = 3
+	StatsStatTypeK_statTypeTcpIo               StatsStatType = 4
+)
+
+type StatsTcpFailReason uint8
+
+const (
+	StatsTcpFailReasonReasonUnknown           StatsTcpFailReason = 0
+	StatsTcpFailReasonReasonConnectionRefused StatsTcpFailReason = 1
+	StatsTcpFailReasonReasonConnectionReset   StatsTcpFailReason = 2
+	StatsTcpFailReasonReasonTimedOut          StatsTcpFailReason = 3
+	StatsTcpFailReasonReasonHostUnreachable   StatsTcpFailReason = 4
+	StatsTcpFailReasonReasonNetUnreachable    StatsTcpFailReason = 5
+	StatsTcpFailReasonReasonOther             StatsTcpFailReason = 255
+)
+
 type StatsTcpFailedConnectionT struct {
 	_      structs.HostLayout
 	Flags  uint8
-	Reason uint8
-	Role   uint8
+	Reason StatsTcpFailReason
+	Role   StatsTcpHandshakeRole
 	Pad    [1]uint8
 	Conn   struct {
 		_      structs.HostLayout
@@ -28,10 +56,18 @@ type StatsTcpFailedConnectionT struct {
 	}
 }
 
+type StatsTcpHandshakeRole uint8
+
+const (
+	StatsTcpHandshakeRoleRoleUnknown StatsTcpHandshakeRole = 0
+	StatsTcpHandshakeRoleRoleClient  StatsTcpHandshakeRole = 1
+	StatsTcpHandshakeRoleRoleServer  StatsTcpHandshakeRole = 2
+)
+
 type StatsTcpIoAccumKeyT struct {
 	_         structs.HostLayout
 	SockPtr   uint64
-	Direction uint8
+	Direction StatsNetworkIoDirection
 	Pad       [7]uint8
 }
 
@@ -45,7 +81,7 @@ type StatsTcpIoAccumT struct {
 type StatsTcpIoT struct {
 	_         structs.HostLayout
 	Flags     uint8
-	Direction uint8
+	Direction StatsNetworkIoDirection
 	Count     uint8
 	Pad       [1]uint8
 	Bytes     [10]uint32
@@ -74,7 +110,7 @@ type StatsTcpRetransmitT struct {
 type StatsTcpRttT struct {
 	_      structs.HostLayout
 	Flags  uint8
-	Role   uint8
+	Role   StatsTcpHandshakeRole
 	Pad    [2]uint8
 	SrttUs uint32
 	Conn   struct {
@@ -111,6 +147,10 @@ const (
 	StatsVarG_goH2WriteFailStep                            = "g_go_h2_write_fail_step"
 	StatsVarIp4ip6Prefix                                   = "ip4ip6_prefix"
 	StatsVarStatsWakeupDataBytes                           = "stats_wakeup_data_bytes"
+	StatsVarUnused1                                        = "unused_1"
+	StatsVarUnused2                                        = "unused_2"
+	StatsVarUnused3                                        = "unused_3"
+	StatsVarUnused4                                        = "unused_4"
 	StatsVarUnusedTcpFailedConnection                      = "unused_tcp_failed_connection"
 	StatsVarUnusedTcpIo                                    = "unused_tcp_io"
 	StatsVarUnusedTcpRetransmitT                           = "unused_tcp_retransmit_t"
@@ -192,6 +232,10 @@ type StatsVariableSpecs struct {
 	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
 	Ip4ip6Prefix               *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
 	StatsWakeupDataBytes       *ebpf.VariableSpec `ebpf:"stats_wakeup_data_bytes"`
+	Unused1                    *ebpf.VariableSpec `ebpf:"unused_1"`
+	Unused2                    *ebpf.VariableSpec `ebpf:"unused_2"`
+	Unused3                    *ebpf.VariableSpec `ebpf:"unused_3"`
+	Unused4                    *ebpf.VariableSpec `ebpf:"unused_4"`
 	UnusedTcpFailedConnection  *ebpf.VariableSpec `ebpf:"unused_tcp_failed_connection"`
 	UnusedTcpIo                *ebpf.VariableSpec `ebpf:"unused_tcp_io"`
 	UnusedTcpRetransmitT       *ebpf.VariableSpec `ebpf:"unused_tcp_retransmit_t"`
@@ -247,6 +291,10 @@ type StatsVariables struct {
 	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
 	Ip4ip6Prefix               *ebpf.Variable `ebpf:"ip4ip6_prefix"`
 	StatsWakeupDataBytes       *ebpf.Variable `ebpf:"stats_wakeup_data_bytes"`
+	Unused1                    *ebpf.Variable `ebpf:"unused_1"`
+	Unused2                    *ebpf.Variable `ebpf:"unused_2"`
+	Unused3                    *ebpf.Variable `ebpf:"unused_3"`
+	Unused4                    *ebpf.Variable `ebpf:"unused_4"`
 	UnusedTcpFailedConnection  *ebpf.Variable `ebpf:"unused_tcp_failed_connection"`
 	UnusedTcpIo                *ebpf.Variable `ebpf:"unused_tcp_io"`
 	UnusedTcpRetransmitT       *ebpf.Variable `ebpf:"unused_tcp_retransmit_t"`

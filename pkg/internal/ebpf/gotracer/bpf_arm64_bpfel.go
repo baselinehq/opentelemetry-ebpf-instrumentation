@@ -38,6 +38,7 @@ type BpfCallProtocolArgsT struct {
 	Pad2            uint16
 	U_buf           uint64
 	SelfRefParentId uint64
+	SockPtr         uint64
 	LwThread        uint64
 }
 
@@ -118,13 +119,15 @@ type BpfFdKey struct {
 }
 
 type BpfFramerFuncInvocationT struct {
-	_         structs.HostLayout
-	FramerPtr uint64
-	Tp        BpfTpInfoT
-	InitialN  int64
-	StreamId  uint32
-	S_port    uint16
-	D_port    uint16
+	_               structs.HostLayout
+	FramerPtr       uint64
+	Tp              BpfTpInfoT
+	InitialN        int64
+	StreamId        uint32
+	S_port          uint16
+	D_port          uint16
+	ReservedPadding bool
+	Pad             [7]uint8
 }
 
 type BpfGoAddrKeyT struct {
@@ -336,31 +339,32 @@ type BpfHttpFuncInvocationT struct {
 }
 
 type BpfHttpInfoT struct {
-	_               structs.HostLayout
-	Flags           uint8
-	Type            uint8
-	Ssl             uint8
-	Delayed         uint8
-	ConnInfo        BpfConnectionInfoT
-	StartMonotimeNs uint64
-	EndMonotimeNs   uint64
-	ReqMonotimeNs   uint64
-	ExtraId         uint64
-	Tp              BpfTpInfoT
-	Pid             BpfPidInfo
-	Len             uint32
-	RespLen         uint32
-	TaskTid         uint32
-	LbReqBytes      uint32
-	LbResBytes      uint32
-	Status          uint16
-	Buf             [256]uint8
-	HasLargeBuffers uint8
-	Direction       uint8
-	Submitted       uint8
-	ParentStatus    uint8
-	EventSource     uint8
-	Pad             [1]uint8
+	_                      structs.HostLayout
+	Flags                  uint8
+	Type                   uint8
+	Ssl                    uint8
+	Delayed                uint8
+	ConnInfo               BpfConnectionInfoT
+	StartMonotimeNs        uint64
+	EndMonotimeNs          uint64
+	ReqMonotimeNs          uint64
+	ExtraId                uint64
+	ResponseBytesAtRequest uint64
+	Tp                     BpfTpInfoT
+	Pid                    BpfPidInfo
+	Len                    uint32
+	RespLen                uint32
+	TaskTid                uint32
+	LbReqBytes             uint32
+	LbResBytes             uint32
+	Status                 uint16
+	Buf                    [256]uint8
+	HasLargeBuffers        uint8
+	Direction              uint8
+	Submitted              uint8
+	ParentStatus           uint8
+	EventSource            uint8
+	ResponseObservation    uint8
 }
 
 type BpfKafkaClientReqT struct {
@@ -446,9 +450,26 @@ type BpfObiCtxInfoT struct {
 	SpanId  [8]uint8
 }
 
+type BpfObiCtxStackT struct {
+	_      structs.HostLayout
+	Frames [4]struct {
+		_        structs.HostLayout
+		Tp       BpfTpInfoT
+		StackOff uint32
+		Kind     uint8
+		Pad      [3]uint8
+	}
+	Depth            uint32
+	UnstoredStackOff uint32
+	Overflow         [8]uint8
+	UnstoredKind     uint8
+	Pad              [7]uint8
+	UnstoredTp       BpfTpInfoT
+}
+
 type BpfOffTableT struct {
 	_     structs.HostLayout
-	Table [132]uint64
+	Table [134]uint64
 }
 
 type BpfOtelSpanT struct {
@@ -542,24 +563,39 @@ type BpfPumaTaskIdT struct {
 	Pad1 uint32
 }
 
+type BpfPythonAddrKeyT struct {
+	_    structs.HostLayout
+	Pid  uint64
+	Addr uint64
+}
+
 type BpfPythonContextTaskT struct {
-	_       structs.HostLayout
-	Task    uint64
-	Version uint64
+	_    structs.HostLayout
+	Task struct {
+		_          structs.HostLayout
+		Addr       uint64
+		Generation uint64
+	}
+	Vars uint64
 }
 
 type BpfPythonTaskStateT struct {
-	_       structs.HostLayout
-	Parent  uint64
-	Version uint64
-	Conn    BpfConnectionInfoPartT
+	_      structs.HostLayout
+	Parent struct {
+		_          structs.HostLayout
+		Addr       uint64
+		Generation uint64
+	}
+	Generation uint64
+	Conn       BpfConnectionInfoPartT
 }
 
 type BpfPythonThreadStateT struct {
-	_              structs.HostLayout
-	CurrentTask    uint64
-	CurrentContext uint64
-	InflightTask   uint64
+	_               structs.HostLayout
+	CurrentTask     uint64
+	CurrentContext  uint64
+	InflightTask    uint64
+	StartMonotimeNs uint64
 }
 
 type BpfRedisClientReqT struct {
@@ -805,16 +841,18 @@ const (
 	BpfMapJavaTasks                                               = "java_tasks"
 	BpfMapJavaVtThreads                                           = "java_vt_threads"
 	BpfMapJumpTable                                               = "jump_table"
+	BpfMapJumpTableUm                                             = "jump_table_um"
 	BpfMapKafkaOngoingRequests                                    = "kafka_ongoing_requests"
 	BpfMapKafkaRequests                                           = "kafka_requests"
 	BpfMapKafkaState                                              = "kafka_state"
 	BpfMapLargeBufEmitStateStorage                                = "large_buf_emit_state_storage"
 	BpfMapListeningPorts                                          = "listening_ports"
-	BpfMapMptrToRootTid                                           = "mptr_to_root_tid"
 	BpfMapMysqlState                                              = "mysql_state"
 	BpfMapNewproc1                                                = "newproc1"
 	BpfMapNginxUpstream                                           = "nginx_upstream"
 	BpfMapNodejsFdMap                                             = "nodejs_fd_map"
+	BpfMapObiCtxStackScratchStorage                               = "obi_ctx_stack_scratch_storage"
+	BpfMapObiCtxStacks                                            = "obi_ctx_stacks"
 	BpfMapOngoingClientConnections                                = "ongoing_client_connections"
 	BpfMapOngoingFdReads                                          = "ongoing_fd_reads"
 	BpfMapOngoingGoroutines                                       = "ongoing_goroutines"
@@ -854,6 +892,7 @@ const (
 	BpfMapPumaTaskConnections                                     = "puma_task_connections"
 	BpfMapPumaWorkerTasks                                         = "puma_worker_tasks"
 	BpfMapPythonContextTask                                       = "python_context_task"
+	BpfMapPythonTaskGeneration                                    = "python_task_generation"
 	BpfMapPythonTaskState                                         = "python_task_state"
 	BpfMapPythonThreadState                                       = "python_thread_state"
 	BpfMapRedisWrites                                             = "redis_writes"
@@ -929,6 +968,9 @@ const (
 	BpfProgObiUprobeHttp2ClientConnWriteHeader                    = "obi_uprobe_http2ClientConnWriteHeader"
 	BpfProgObiUprobeHttp2ClientStreamEncodeAndWriteHeaders        = "obi_uprobe_http2ClientStreamEncodeAndWriteHeaders"
 	BpfProgObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns = "obi_uprobe_http2ClientStreamEncodeAndWriteHeaders_returns"
+	BpfProgObiUprobeHttp2FramerEndWrite                           = "obi_uprobe_http2FramerEndWrite"
+	BpfProgObiUprobeHttp2FramerReservePadding                     = "obi_uprobe_http2FramerReservePadding"
+	BpfProgObiUprobeHttp2FramerReservePaddingVendored             = "obi_uprobe_http2FramerReservePadding_vendored"
 	BpfProgObiUprobeHttp2FramerWriteHeadersReturns                = "obi_uprobe_http2FramerWriteHeaders_returns"
 	BpfProgObiUprobeHttp2ResponseWriterStateWriteHeader           = "obi_uprobe_http2ResponseWriterStateWriteHeader"
 	BpfProgObiUprobeHttp2RoundTrip                                = "obi_uprobe_http2RoundTrip"
@@ -988,8 +1030,6 @@ const (
 	BpfProgObiUprobeRuntimeChanrecv2Return                        = "obi_uprobe_runtime_chanrecv2_return"
 	BpfProgObiUprobeRuntimeChansend1                              = "obi_uprobe_runtime_chansend1"
 	BpfProgObiUprobeRuntimeChansend1Return                        = "obi_uprobe_runtime_chansend1_return"
-	BpfProgObiUprobeRuntimeMexit                                  = "obi_uprobe_runtime_mexit"
-	BpfProgObiUprobeRuntimeMstart1                                = "obi_uprobe_runtime_mstart1"
 	BpfProgObiUprobeRuntimeNewproc1                               = "obi_uprobe_runtime_newproc1"
 	BpfProgObiUprobeRuntimeNewproc1Return                         = "obi_uprobe_runtime_newproc1_return"
 	BpfProgObiUprobeSaramaBrokerWrite                             = "obi_uprobe_sarama_broker_write"
@@ -1152,6 +1192,9 @@ type BpfProgramSpecs struct {
 	ObiUprobeHttp2ClientConnWriteHeader                    *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ClientConnWriteHeader"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeaders        *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders_returns"`
+	ObiUprobeHttp2FramerEndWrite                           *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerEndWrite"`
+	ObiUprobeHttp2FramerReservePadding                     *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerReservePadding"`
+	ObiUprobeHttp2FramerReservePaddingVendored             *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerReservePadding_vendored"`
 	ObiUprobeHttp2FramerWriteHeadersReturns                *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerWriteHeaders_returns"`
 	ObiUprobeHttp2ResponseWriterStateWriteHeader           *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ResponseWriterStateWriteHeader"`
 	ObiUprobeHttp2RoundTrip                                *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2RoundTrip"`
@@ -1211,8 +1254,6 @@ type BpfProgramSpecs struct {
 	ObiUprobeRuntimeChanrecv2Return                        *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_chanrecv2_return"`
 	ObiUprobeRuntimeChansend1                              *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_chansend1"`
 	ObiUprobeRuntimeChansend1Return                        *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_chansend1_return"`
-	ObiUprobeRuntimeMexit                                  *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_mexit"`
-	ObiUprobeRuntimeMstart1                                *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_mstart1"`
 	ObiUprobeRuntimeNewproc1                               *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_newproc1"`
 	ObiUprobeRuntimeNewproc1Return                         *ebpf.ProgramSpec `ebpf:"obi_uprobe_runtime_newproc1_return"`
 	ObiUprobeSaramaBrokerWrite                             *ebpf.ProgramSpec `ebpf:"obi_uprobe_sarama_broker_write"`
@@ -1300,16 +1341,18 @@ type BpfMapSpecs struct {
 	JavaTasks                      *ebpf.MapSpec `ebpf:"java_tasks"`
 	JavaVtThreads                  *ebpf.MapSpec `ebpf:"java_vt_threads"`
 	JumpTable                      *ebpf.MapSpec `ebpf:"jump_table"`
+	JumpTableUm                    *ebpf.MapSpec `ebpf:"jump_table_um"`
 	KafkaOngoingRequests           *ebpf.MapSpec `ebpf:"kafka_ongoing_requests"`
 	KafkaRequests                  *ebpf.MapSpec `ebpf:"kafka_requests"`
 	KafkaState                     *ebpf.MapSpec `ebpf:"kafka_state"`
 	LargeBufEmitStateStorage       *ebpf.MapSpec `ebpf:"large_buf_emit_state_storage"`
 	ListeningPorts                 *ebpf.MapSpec `ebpf:"listening_ports"`
-	MptrToRootTid                  *ebpf.MapSpec `ebpf:"mptr_to_root_tid"`
 	MysqlState                     *ebpf.MapSpec `ebpf:"mysql_state"`
 	Newproc1                       *ebpf.MapSpec `ebpf:"newproc1"`
 	NginxUpstream                  *ebpf.MapSpec `ebpf:"nginx_upstream"`
 	NodejsFdMap                    *ebpf.MapSpec `ebpf:"nodejs_fd_map"`
+	ObiCtxStackScratchStorage      *ebpf.MapSpec `ebpf:"obi_ctx_stack_scratch_storage"`
+	ObiCtxStacks                   *ebpf.MapSpec `ebpf:"obi_ctx_stacks"`
 	OngoingClientConnections       *ebpf.MapSpec `ebpf:"ongoing_client_connections"`
 	OngoingFdReads                 *ebpf.MapSpec `ebpf:"ongoing_fd_reads"`
 	OngoingGoroutines              *ebpf.MapSpec `ebpf:"ongoing_goroutines"`
@@ -1349,6 +1392,7 @@ type BpfMapSpecs struct {
 	PumaTaskConnections            *ebpf.MapSpec `ebpf:"puma_task_connections"`
 	PumaWorkerTasks                *ebpf.MapSpec `ebpf:"puma_worker_tasks"`
 	PythonContextTask              *ebpf.MapSpec `ebpf:"python_context_task"`
+	PythonTaskGeneration           *ebpf.MapSpec `ebpf:"python_task_generation"`
 	PythonTaskState                *ebpf.MapSpec `ebpf:"python_task_state"`
 	PythonThreadState              *ebpf.MapSpec `ebpf:"python_thread_state"`
 	RedisWrites                    *ebpf.MapSpec `ebpf:"redis_writes"`
@@ -1497,16 +1541,18 @@ type BpfMaps struct {
 	JavaTasks                      *ebpf.Map `ebpf:"java_tasks"`
 	JavaVtThreads                  *ebpf.Map `ebpf:"java_vt_threads"`
 	JumpTable                      *ebpf.Map `ebpf:"jump_table"`
+	JumpTableUm                    *ebpf.Map `ebpf:"jump_table_um"`
 	KafkaOngoingRequests           *ebpf.Map `ebpf:"kafka_ongoing_requests"`
 	KafkaRequests                  *ebpf.Map `ebpf:"kafka_requests"`
 	KafkaState                     *ebpf.Map `ebpf:"kafka_state"`
 	LargeBufEmitStateStorage       *ebpf.Map `ebpf:"large_buf_emit_state_storage"`
 	ListeningPorts                 *ebpf.Map `ebpf:"listening_ports"`
-	MptrToRootTid                  *ebpf.Map `ebpf:"mptr_to_root_tid"`
 	MysqlState                     *ebpf.Map `ebpf:"mysql_state"`
 	Newproc1                       *ebpf.Map `ebpf:"newproc1"`
 	NginxUpstream                  *ebpf.Map `ebpf:"nginx_upstream"`
 	NodejsFdMap                    *ebpf.Map `ebpf:"nodejs_fd_map"`
+	ObiCtxStackScratchStorage      *ebpf.Map `ebpf:"obi_ctx_stack_scratch_storage"`
+	ObiCtxStacks                   *ebpf.Map `ebpf:"obi_ctx_stacks"`
 	OngoingClientConnections       *ebpf.Map `ebpf:"ongoing_client_connections"`
 	OngoingFdReads                 *ebpf.Map `ebpf:"ongoing_fd_reads"`
 	OngoingGoroutines              *ebpf.Map `ebpf:"ongoing_goroutines"`
@@ -1546,6 +1592,7 @@ type BpfMaps struct {
 	PumaTaskConnections            *ebpf.Map `ebpf:"puma_task_connections"`
 	PumaWorkerTasks                *ebpf.Map `ebpf:"puma_worker_tasks"`
 	PythonContextTask              *ebpf.Map `ebpf:"python_context_task"`
+	PythonTaskGeneration           *ebpf.Map `ebpf:"python_task_generation"`
 	PythonTaskState                *ebpf.Map `ebpf:"python_task_state"`
 	PythonThreadState              *ebpf.Map `ebpf:"python_thread_state"`
 	RedisWrites                    *ebpf.Map `ebpf:"redis_writes"`
@@ -1629,16 +1676,18 @@ func (m *BpfMaps) Close() error {
 		m.JavaTasks,
 		m.JavaVtThreads,
 		m.JumpTable,
+		m.JumpTableUm,
 		m.KafkaOngoingRequests,
 		m.KafkaRequests,
 		m.KafkaState,
 		m.LargeBufEmitStateStorage,
 		m.ListeningPorts,
-		m.MptrToRootTid,
 		m.MysqlState,
 		m.Newproc1,
 		m.NginxUpstream,
 		m.NodejsFdMap,
+		m.ObiCtxStackScratchStorage,
+		m.ObiCtxStacks,
 		m.OngoingClientConnections,
 		m.OngoingFdReads,
 		m.OngoingGoroutines,
@@ -1678,6 +1727,7 @@ func (m *BpfMaps) Close() error {
 		m.PumaTaskConnections,
 		m.PumaWorkerTasks,
 		m.PythonContextTask,
+		m.PythonTaskGeneration,
 		m.PythonTaskState,
 		m.PythonThreadState,
 		m.RedisWrites,
@@ -1807,6 +1857,9 @@ type BpfPrograms struct {
 	ObiUprobeHttp2ClientConnWriteHeader                    *ebpf.Program `ebpf:"obi_uprobe_http2ClientConnWriteHeader"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeaders        *ebpf.Program `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns *ebpf.Program `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders_returns"`
+	ObiUprobeHttp2FramerEndWrite                           *ebpf.Program `ebpf:"obi_uprobe_http2FramerEndWrite"`
+	ObiUprobeHttp2FramerReservePadding                     *ebpf.Program `ebpf:"obi_uprobe_http2FramerReservePadding"`
+	ObiUprobeHttp2FramerReservePaddingVendored             *ebpf.Program `ebpf:"obi_uprobe_http2FramerReservePadding_vendored"`
 	ObiUprobeHttp2FramerWriteHeadersReturns                *ebpf.Program `ebpf:"obi_uprobe_http2FramerWriteHeaders_returns"`
 	ObiUprobeHttp2ResponseWriterStateWriteHeader           *ebpf.Program `ebpf:"obi_uprobe_http2ResponseWriterStateWriteHeader"`
 	ObiUprobeHttp2RoundTrip                                *ebpf.Program `ebpf:"obi_uprobe_http2RoundTrip"`
@@ -1866,8 +1919,6 @@ type BpfPrograms struct {
 	ObiUprobeRuntimeChanrecv2Return                        *ebpf.Program `ebpf:"obi_uprobe_runtime_chanrecv2_return"`
 	ObiUprobeRuntimeChansend1                              *ebpf.Program `ebpf:"obi_uprobe_runtime_chansend1"`
 	ObiUprobeRuntimeChansend1Return                        *ebpf.Program `ebpf:"obi_uprobe_runtime_chansend1_return"`
-	ObiUprobeRuntimeMexit                                  *ebpf.Program `ebpf:"obi_uprobe_runtime_mexit"`
-	ObiUprobeRuntimeMstart1                                *ebpf.Program `ebpf:"obi_uprobe_runtime_mstart1"`
 	ObiUprobeRuntimeNewproc1                               *ebpf.Program `ebpf:"obi_uprobe_runtime_newproc1"`
 	ObiUprobeRuntimeNewproc1Return                         *ebpf.Program `ebpf:"obi_uprobe_runtime_newproc1_return"`
 	ObiUprobeSaramaBrokerWrite                             *ebpf.Program `ebpf:"obi_uprobe_sarama_broker_write"`
@@ -1949,6 +2000,9 @@ func (p *BpfPrograms) Close() error {
 		p.ObiUprobeHttp2ClientConnWriteHeader,
 		p.ObiUprobeHttp2ClientStreamEncodeAndWriteHeaders,
 		p.ObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns,
+		p.ObiUprobeHttp2FramerEndWrite,
+		p.ObiUprobeHttp2FramerReservePadding,
+		p.ObiUprobeHttp2FramerReservePaddingVendored,
 		p.ObiUprobeHttp2FramerWriteHeadersReturns,
 		p.ObiUprobeHttp2ResponseWriterStateWriteHeader,
 		p.ObiUprobeHttp2RoundTrip,
@@ -2008,8 +2062,6 @@ func (p *BpfPrograms) Close() error {
 		p.ObiUprobeRuntimeChanrecv2Return,
 		p.ObiUprobeRuntimeChansend1,
 		p.ObiUprobeRuntimeChansend1Return,
-		p.ObiUprobeRuntimeMexit,
-		p.ObiUprobeRuntimeMstart1,
 		p.ObiUprobeRuntimeNewproc1,
 		p.ObiUprobeRuntimeNewproc1Return,
 		p.ObiUprobeSaramaBrokerWrite,

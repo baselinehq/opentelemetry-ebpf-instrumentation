@@ -51,6 +51,7 @@ type BpfCallProtocolArgsT struct {
 	Pad2            uint16
 	U_buf           uint64
 	SelfRefParentId uint64
+	SockPtr         uint64
 	LwThread        uint64
 }
 
@@ -201,31 +202,48 @@ type BpfHttpConnectionMetadataT struct {
 }
 
 type BpfHttpInfoT struct {
-	_               structs.HostLayout
-	Flags           uint8
-	Type            uint8
-	Ssl             uint8
-	Delayed         uint8
-	ConnInfo        BpfConnectionInfoT
-	StartMonotimeNs uint64
-	EndMonotimeNs   uint64
-	ReqMonotimeNs   uint64
-	ExtraId         uint64
-	Tp              BpfTpInfoT
-	Pid             BpfPidInfo
-	Len             uint32
-	RespLen         uint32
-	TaskTid         uint32
-	LbReqBytes      uint32
-	LbResBytes      uint32
-	Status          uint16
-	Buf             [256]uint8
-	HasLargeBuffers uint8
-	Direction       uint8
-	Submitted       uint8
-	ParentStatus    uint8
-	EventSource     uint8
-	Pad             [1]uint8
+	_                      structs.HostLayout
+	Flags                  uint8
+	Type                   uint8
+	Ssl                    uint8
+	Delayed                uint8
+	ConnInfo               BpfConnectionInfoT
+	StartMonotimeNs        uint64
+	EndMonotimeNs          uint64
+	ReqMonotimeNs          uint64
+	ExtraId                uint64
+	ResponseBytesAtRequest uint64
+	Tp                     BpfTpInfoT
+	Pid                    BpfPidInfo
+	Len                    uint32
+	RespLen                uint32
+	TaskTid                uint32
+	LbReqBytes             uint32
+	LbResBytes             uint32
+	Status                 uint16
+	Buf                    [256]uint8
+	HasLargeBuffers        uint8
+	Direction              uint8
+	Submitted              uint8
+	ParentStatus           uint8
+	EventSource            uint8
+	ResponseObservation    uint8
+}
+
+type BpfJvmGcDurationEvent struct {
+	_             structs.HostLayout
+	Type          uint8
+	Pad           [7]uint8
+	Timestamp     uint64
+	GlobalPid     uint32
+	GlobalTid     uint32
+	NsPid         uint32
+	NsTid         uint32
+	PidNsId       uint32
+	Pad2          uint32
+	DurationNs    uint64
+	CollectorName [64]uint8
+	Action        [64]uint8
 }
 
 type BpfJvmMemPoolGcEvent struct {
@@ -367,7 +385,7 @@ type BpfObiUsdtSpec struct {
 
 type BpfOffTableT struct {
 	_     structs.HostLayout
-	Table [132]uint64
+	Table [134]uint64
 }
 
 type BpfPartialConnectionInfoT struct {
@@ -428,10 +446,20 @@ type BpfPumaTaskIdT struct {
 	Pad1 uint32
 }
 
+type BpfPythonAddrKeyT struct {
+	_    structs.HostLayout
+	Pid  uint64
+	Addr uint64
+}
+
 type BpfPythonContextTaskT struct {
-	_       structs.HostLayout
-	Task    uint64
-	Version uint64
+	_    structs.HostLayout
+	Task struct {
+		_          structs.HostLayout
+		Addr       uint64
+		Generation uint64
+	}
+	Vars uint64
 }
 
 type BpfPythonRuntimeMetricSnapshot struct {
@@ -456,17 +484,22 @@ type BpfPythonRuntimeMetricTarget struct {
 }
 
 type BpfPythonTaskStateT struct {
-	_       structs.HostLayout
-	Parent  uint64
-	Version uint64
-	Conn    BpfConnectionInfoPartT
+	_      structs.HostLayout
+	Parent struct {
+		_          structs.HostLayout
+		Addr       uint64
+		Generation uint64
+	}
+	Generation uint64
+	Conn       BpfConnectionInfoPartT
 }
 
 type BpfPythonThreadStateT struct {
-	_              structs.HostLayout
-	CurrentTask    uint64
-	CurrentContext uint64
-	InflightTask   uint64
+	_               structs.HostLayout
+	CurrentTask     uint64
+	CurrentContext  uint64
+	InflightTask    uint64
+	StartMonotimeNs uint64
 }
 
 type BpfRecvArgsT struct {
@@ -692,6 +725,7 @@ const (
 	BpfMapJavaVtThreads                                       = "java_vt_threads"
 	BpfMapJumpTable                                           = "jump_table"
 	BpfMapJumpTableSkb                                        = "jump_table_skb"
+	BpfMapJumpTableUm                                         = "jump_table_um"
 	BpfMapJvmMemPoolSamples                                   = "jvm_mem_pool_samples"
 	BpfMapKafkaOngoingRequests                                = "kafka_ongoing_requests"
 	BpfMapKafkaState                                          = "kafka_state"
@@ -726,6 +760,7 @@ const (
 	BpfMapPythonContextTask                                   = "python_context_task"
 	BpfMapPythonRuntimeMetricSnapshots                        = "python_runtime_metric_snapshots"
 	BpfMapPythonRuntimeMetricTargets                          = "python_runtime_metric_targets"
+	BpfMapPythonTaskGeneration                                = "python_task_generation"
 	BpfMapPythonTaskState                                     = "python_task_state"
 	BpfMapPythonThreadState                                   = "python_thread_state"
 	BpfMapServerTraces                                        = "server_traces"
@@ -805,8 +840,10 @@ const (
 	BpfProgObiSocketHttpFilter                                = "obi_socket__http_filter"
 	BpfProgObiSocketFltBuf                                    = "obi_socket_flt_buf"
 	BpfProgObiUprobeBioWrite                                  = "obi_uprobe_bio_write"
+	BpfProgObiUprobeContextDealloc                            = "obi_uprobe_context_dealloc"
 	BpfProgObiUprobeContextRun                                = "obi_uprobe_context_run"
 	BpfProgObiUprobeCopyContext                               = "obi_uprobe_copy_context"
+	BpfProgObiUprobeNewContext                                = "obi_uprobe_new_context"
 	BpfProgObiUprobePythonGcDone                              = "obi_uprobe_python_gc_done"
 	BpfProgObiUprobeSslFree                                   = "obi_uprobe_ssl_free"
 	BpfProgObiUprobeSslRead                                   = "obi_uprobe_ssl_read"
@@ -841,6 +878,7 @@ const (
 	BpfVarTP_TID_PREFIX                                       = "TP_TID_PREFIX"
 	BpfVarTP_TID_PREFIX_SIZE                                  = "TP_TID_PREFIX_SIZE"
 	BpfVarPnUnused                                            = "__pn_unused"
+	BpfVarJvmGcDurationEvent                                  = "_jvm_gc_duration_event"
 	BpfVarJvmMemPoolGcEvent                                   = "_jvm_mem_pool_gc_event"
 	BpfVarJvmRuntimeMetricsEvent                              = "_jvm_runtime_metrics_event"
 	BpfVarNodejsEventloopEvent                                = "_nodejs_eventloop_event"
@@ -972,8 +1010,10 @@ type BpfProgramSpecs struct {
 	ObiSocketHttpFilter                                *ebpf.ProgramSpec `ebpf:"obi_socket__http_filter"`
 	ObiSocketFltBuf                                    *ebpf.ProgramSpec `ebpf:"obi_socket_flt_buf"`
 	ObiUprobeBioWrite                                  *ebpf.ProgramSpec `ebpf:"obi_uprobe_bio_write"`
+	ObiUprobeContextDealloc                            *ebpf.ProgramSpec `ebpf:"obi_uprobe_context_dealloc"`
 	ObiUprobeContextRun                                *ebpf.ProgramSpec `ebpf:"obi_uprobe_context_run"`
 	ObiUprobeCopyContext                               *ebpf.ProgramSpec `ebpf:"obi_uprobe_copy_context"`
+	ObiUprobeNewContext                                *ebpf.ProgramSpec `ebpf:"obi_uprobe_new_context"`
 	ObiUprobePythonGcDone                              *ebpf.ProgramSpec `ebpf:"obi_uprobe_python_gc_done"`
 	ObiUprobeSslFree                                   *ebpf.ProgramSpec `ebpf:"obi_uprobe_ssl_free"`
 	ObiUprobeSslRead                                   *ebpf.ProgramSpec `ebpf:"obi_uprobe_ssl_read"`
@@ -1041,6 +1081,7 @@ type BpfMapSpecs struct {
 	JavaVtThreads                *ebpf.MapSpec `ebpf:"java_vt_threads"`
 	JumpTable                    *ebpf.MapSpec `ebpf:"jump_table"`
 	JumpTableSkb                 *ebpf.MapSpec `ebpf:"jump_table_skb"`
+	JumpTableUm                  *ebpf.MapSpec `ebpf:"jump_table_um"`
 	JvmMemPoolSamples            *ebpf.MapSpec `ebpf:"jvm_mem_pool_samples"`
 	KafkaOngoingRequests         *ebpf.MapSpec `ebpf:"kafka_ongoing_requests"`
 	KafkaState                   *ebpf.MapSpec `ebpf:"kafka_state"`
@@ -1075,6 +1116,7 @@ type BpfMapSpecs struct {
 	PythonContextTask            *ebpf.MapSpec `ebpf:"python_context_task"`
 	PythonRuntimeMetricSnapshots *ebpf.MapSpec `ebpf:"python_runtime_metric_snapshots"`
 	PythonRuntimeMetricTargets   *ebpf.MapSpec `ebpf:"python_runtime_metric_targets"`
+	PythonTaskGeneration         *ebpf.MapSpec `ebpf:"python_task_generation"`
 	PythonTaskState              *ebpf.MapSpec `ebpf:"python_task_state"`
 	PythonThreadState            *ebpf.MapSpec `ebpf:"python_thread_state"`
 	ServerTraces                 *ebpf.MapSpec `ebpf:"server_traces"`
@@ -1118,6 +1160,7 @@ type BpfVariableSpecs struct {
 	TP_TID_PREFIX               *ebpf.VariableSpec `ebpf:"TP_TID_PREFIX"`
 	TP_TID_PREFIX_SIZE          *ebpf.VariableSpec `ebpf:"TP_TID_PREFIX_SIZE"`
 	PnUnused                    *ebpf.VariableSpec `ebpf:"__pn_unused"`
+	JvmGcDurationEvent          *ebpf.VariableSpec `ebpf:"_jvm_gc_duration_event"`
 	JvmMemPoolGcEvent           *ebpf.VariableSpec `ebpf:"_jvm_mem_pool_gc_event"`
 	JvmRuntimeMetricsEvent      *ebpf.VariableSpec `ebpf:"_jvm_runtime_metrics_event"`
 	NodejsEventloopEvent        *ebpf.VariableSpec `ebpf:"_nodejs_eventloop_event"`
@@ -1212,6 +1255,7 @@ type BpfMaps struct {
 	JavaVtThreads                *ebpf.Map `ebpf:"java_vt_threads"`
 	JumpTable                    *ebpf.Map `ebpf:"jump_table"`
 	JumpTableSkb                 *ebpf.Map `ebpf:"jump_table_skb"`
+	JumpTableUm                  *ebpf.Map `ebpf:"jump_table_um"`
 	JvmMemPoolSamples            *ebpf.Map `ebpf:"jvm_mem_pool_samples"`
 	KafkaOngoingRequests         *ebpf.Map `ebpf:"kafka_ongoing_requests"`
 	KafkaState                   *ebpf.Map `ebpf:"kafka_state"`
@@ -1246,6 +1290,7 @@ type BpfMaps struct {
 	PythonContextTask            *ebpf.Map `ebpf:"python_context_task"`
 	PythonRuntimeMetricSnapshots *ebpf.Map `ebpf:"python_runtime_metric_snapshots"`
 	PythonRuntimeMetricTargets   *ebpf.Map `ebpf:"python_runtime_metric_targets"`
+	PythonTaskGeneration         *ebpf.Map `ebpf:"python_task_generation"`
 	PythonTaskState              *ebpf.Map `ebpf:"python_task_state"`
 	PythonThreadState            *ebpf.Map `ebpf:"python_thread_state"`
 	ServerTraces                 *ebpf.Map `ebpf:"server_traces"`
@@ -1314,6 +1359,7 @@ func (m *BpfMaps) Close() error {
 		m.JavaVtThreads,
 		m.JumpTable,
 		m.JumpTableSkb,
+		m.JumpTableUm,
 		m.JvmMemPoolSamples,
 		m.KafkaOngoingRequests,
 		m.KafkaState,
@@ -1348,6 +1394,7 @@ func (m *BpfMaps) Close() error {
 		m.PythonContextTask,
 		m.PythonRuntimeMetricSnapshots,
 		m.PythonRuntimeMetricTargets,
+		m.PythonTaskGeneration,
 		m.PythonTaskState,
 		m.PythonThreadState,
 		m.ServerTraces,
@@ -1392,6 +1439,7 @@ type BpfVariables struct {
 	TP_TID_PREFIX               *ebpf.Variable `ebpf:"TP_TID_PREFIX"`
 	TP_TID_PREFIX_SIZE          *ebpf.Variable `ebpf:"TP_TID_PREFIX_SIZE"`
 	PnUnused                    *ebpf.Variable `ebpf:"__pn_unused"`
+	JvmGcDurationEvent          *ebpf.Variable `ebpf:"_jvm_gc_duration_event"`
 	JvmMemPoolGcEvent           *ebpf.Variable `ebpf:"_jvm_mem_pool_gc_event"`
 	JvmRuntimeMetricsEvent      *ebpf.Variable `ebpf:"_jvm_runtime_metrics_event"`
 	NodejsEventloopEvent        *ebpf.Variable `ebpf:"_nodejs_eventloop_event"`
@@ -1485,8 +1533,10 @@ type BpfPrograms struct {
 	ObiSocketHttpFilter                                *ebpf.Program `ebpf:"obi_socket__http_filter"`
 	ObiSocketFltBuf                                    *ebpf.Program `ebpf:"obi_socket_flt_buf"`
 	ObiUprobeBioWrite                                  *ebpf.Program `ebpf:"obi_uprobe_bio_write"`
+	ObiUprobeContextDealloc                            *ebpf.Program `ebpf:"obi_uprobe_context_dealloc"`
 	ObiUprobeContextRun                                *ebpf.Program `ebpf:"obi_uprobe_context_run"`
 	ObiUprobeCopyContext                               *ebpf.Program `ebpf:"obi_uprobe_copy_context"`
+	ObiUprobeNewContext                                *ebpf.Program `ebpf:"obi_uprobe_new_context"`
 	ObiUprobePythonGcDone                              *ebpf.Program `ebpf:"obi_uprobe_python_gc_done"`
 	ObiUprobeSslFree                                   *ebpf.Program `ebpf:"obi_uprobe_ssl_free"`
 	ObiUprobeSslRead                                   *ebpf.Program `ebpf:"obi_uprobe_ssl_read"`
@@ -1567,8 +1617,10 @@ func (p *BpfPrograms) Close() error {
 		p.ObiSocketHttpFilter,
 		p.ObiSocketFltBuf,
 		p.ObiUprobeBioWrite,
+		p.ObiUprobeContextDealloc,
 		p.ObiUprobeContextRun,
 		p.ObiUprobeCopyContext,
+		p.ObiUprobeNewContext,
 		p.ObiUprobePythonGcDone,
 		p.ObiUprobeSslFree,
 		p.ObiUprobeSslRead,

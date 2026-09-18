@@ -107,6 +107,8 @@ const (
 	BpfEventTypeK_eventTypeNodejsHeapSpace        BpfEventType = 28
 	BpfEventTypeK_eventTypePythonRuntimeMetrics   BpfEventType = 29
 	BpfEventTypeK_eventTypeJvmRuntimeMetrics      BpfEventType = 30
+	BpfEventTypeK_eventTypeNodejsResource         BpfEventType = 31
+	BpfEventTypeK_eventTypeJvmGcDuration          BpfEventType = 32
 )
 
 type BpfGoAutoSpanT struct {
@@ -157,17 +159,18 @@ type BpfHttp2GrpcRequestT struct {
 }
 
 type BpfHttpInfoT struct {
-	_               structs.HostLayout
-	Flags           uint8
-	Type            uint8
-	Ssl             uint8
-	Delayed         uint8
-	ConnInfo        BpfConnectionInfoT
-	StartMonotimeNs uint64
-	EndMonotimeNs   uint64
-	ReqMonotimeNs   uint64
-	ExtraId         uint64
-	Tp              struct {
+	_                      structs.HostLayout
+	Flags                  uint8
+	Type                   uint8
+	Ssl                    uint8
+	Delayed                uint8
+	ConnInfo               BpfConnectionInfoT
+	StartMonotimeNs        uint64
+	EndMonotimeNs          uint64
+	ReqMonotimeNs          uint64
+	ExtraId                uint64
+	ResponseBytesAtRequest uint64
+	Tp                     struct {
 		_        structs.HostLayout
 		TraceId  [16]uint8
 		SpanId   [8]uint8
@@ -182,19 +185,19 @@ type BpfHttpInfoT struct {
 		UserPid uint32
 		Ns      uint32
 	}
-	Len             uint32
-	RespLen         uint32
-	TaskTid         uint32
-	LbReqBytes      uint32
-	LbResBytes      uint32
-	Status          uint16
-	Buf             [256]uint8
-	HasLargeBuffers uint8
-	Direction       uint8
-	Submitted       uint8
-	ParentStatus    uint8
-	EventSource     uint8
-	Pad             [1]uint8
+	Len                 uint32
+	RespLen             uint32
+	TaskTid             uint32
+	LbReqBytes          uint32
+	LbResBytes          uint32
+	Status              uint16
+	Buf                 [256]uint8
+	HasLargeBuffers     uint8
+	Direction           uint8
+	Submitted           uint8
+	ParentStatus        uint8
+	EventSource         uint8
+	ResponseObservation uint8
 }
 
 type BpfHttpRequestTraceT struct {
