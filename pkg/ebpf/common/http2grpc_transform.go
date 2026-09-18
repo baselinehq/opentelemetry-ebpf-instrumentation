@@ -9,6 +9,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
 	"regexp"
 	"strconv"
 	"strings"
@@ -73,8 +74,9 @@ type h2ResponseMeta struct {
 }
 
 type pendingH2Event struct {
-	event    BPFHTTP2Info
-	response h2ResponseMeta
+	event          BPFHTTP2Info
+	response       h2ResponseMeta
+	requestHeaders http.Header
 }
 
 type h2StreamMeta struct {
@@ -86,6 +88,7 @@ type h2StreamMeta struct {
 }
 
 type h2RequestMeta struct {
+	headers  http.Header
 	method   string
 	path     string
 	fullPath string
@@ -276,7 +279,7 @@ func hpackOpensResponse(frag []byte) bool {
 	return b&formMask != formMask
 }
 
-func readMetaFrame(parseContext *EBPFParseContext, connID uint64, fr *http2.Framer, hf *http2.HeadersFrame) (string, string, string, string, bool, bool) {
+func readMetaFrame(parseContext *EBPFParseContext, connID uint64, fr *http2.Framer, hf *http2.HeadersFrame, headers http.Header) (string, string, string, string, bool, bool) {
 	h2c := getOrInitH2Conn(parseContext.h2c, connID)
 
 	ok := false
@@ -290,7 +293,20 @@ func readMetaFrame(parseContext *EBPFParseContext, connID uint64, fr *http2.Fram
 		return method, path, contentType, authority, ok, isResponse
 	}
 
+	const maxEnrichmentHeaderBytes = 64 << 10
+	headerBytes := 0
+	headersValid := true
 	h2c.hdec.SetEmitFunc(func(hf bhpack.HeaderField) {
+		if headers != nil && headersValid {
+			headerBytes += len(hf.Name) + len(hf.Value)
+			if hf.Name == "<BAD INDEX>" || headerBytes > maxEnrichmentHeaderBytes {
+				headersValid = false
+				clear(headers)
+			} else if !strings.HasPrefix(hf.Name, ":") {
+				headers.Add(hf.Name, hf.Value)
+			}
+		}
+
 		switch hf.Name {
 		case ":method":
 			method = hf.Value
@@ -314,7 +330,11 @@ func readMetaFrame(parseContext *EBPFParseContext, connID uint64, fr *http2.Fram
 	})
 	// Lose reference to MetaHeadersFrame:
 	defer h2c.hdec.SetEmitFunc(func(_ bhpack.HeaderField) {})
-	defer h2c.hdec.Close()
+	defer func() {
+		if err := h2c.hdec.Close(); err != nil {
+			clear(headers)
+		}
+	}()
 
 	frag := hf.HeaderBlockFragment()
 
@@ -326,6 +346,7 @@ func readMetaFrame(parseContext *EBPFParseContext, connID uint64, fr *http2.Fram
 
 	for {
 		if _, err := h2c.hdec.Write(frag); err != nil {
+			clear(headers)
 			return method, path, contentType, authority, ok, isResponse
 		}
 		if hf.HeadersEnded() {
@@ -611,7 +632,10 @@ func http2EventToSpan(parseContext *EBPFParseContext, pending *pendingH2Event) (
 		}
 
 		if ff, ok := f.(*http2.HeadersFrame); ok {
-			method, path, contentType, authority, ok, isResponse := readMetaFrame(parseContext, connID, framer, ff)
+			if parseContext.httpEnricher != nil && capturedHeaderBlockComplete(event.Data[:bLen]) {
+				pending.requestHeaders = make(http.Header)
+			}
+			method, path, contentType, authority, ok, isResponse := readMetaFrame(parseContext, connID, framer, ff, pending.requestHeaders)
 			if isResponse {
 				return request.Span{}, true, nil // response HEADERS misread as a request start
 			}
@@ -645,7 +669,11 @@ func http2EventToSpan(parseContext *EBPFParseContext, pending *pendingH2Event) (
 				host, hostPort = splitAuthority(authority)
 			}
 
-			return http2InfoToSpan(event, method, path, fullPath, peer, host, hostPort, status, eventType), false, nil
+			span := http2InfoToSpan(event, method, path, fullPath, peer, host, hostPort, status, eventType)
+			if event.Flags != EventTypeKHTTP2RequestHeaders && parseContext.httpEnricher != nil {
+				parseContext.httpEnricher.EnrichRequestHeaders(&span, pending.requestHeaders)
+			}
+			return span, false, nil
 		}
 	}
 
@@ -718,12 +746,14 @@ func readHTTP2HeaderEvent(parseContext *EBPFParseContext, event *BPFHTTP2Info) e
 	switch event.Flags {
 	case EventTypeKHTTP2RequestHeaders:
 		stream.requestSeen = true
-		span, ignore, err := http2EventToSpan(parseContext, &pendingH2Event{event: *event})
+		pending := &pendingH2Event{event: *event}
+		span, ignore, err := http2EventToSpan(parseContext, pending)
 		if err != nil {
 			return err
 		}
 		if !ignore && !stream.requestOK {
 			stream.request = h2RequestMeta{
+				headers:  pending.requestHeaders,
 				method:   span.Method,
 				path:     span.Path,
 				fullPath: span.FullPath,
@@ -817,6 +847,9 @@ func http2FromBuffers(parseContext *EBPFParseContext, event *BPFHTTP2Info) (requ
 	span := http2InfoToSpan(
 		event, cached.method, cached.path, cached.fullPath, peer, host, hostPort, status, protocol,
 	)
+	if parseContext.httpEnricher != nil {
+		parseContext.httpEnricher.EnrichRequestHeaders(&span, cached.headers)
+	}
 	return span, false, nil
 }
 

@@ -201,7 +201,7 @@ func TestHTTP2Parsing(t *testing.T) {
 				}
 
 				if ff, ok := f.(*http2.HeadersFrame); ok {
-					method, path, contentType, _, _, _ := readMetaFrame(parseContext, 0, framer, ff)
+					method, path, contentType, _, _, _ := readMetaFrame(parseContext, 0, framer, ff, nil)
 					assert.Equal(t, tt.method, method)
 					assert.Equal(t, tt.path, path)
 					assert.Equal(t, tt.contentType, contentType)
@@ -238,7 +238,7 @@ func TestHTTP2ResponseDetection(t *testing.T) {
 	parseContext := NewEBPFParseContext(nil, nil, nil)
 	framer := byteFramer(nil)
 
-	_, _, _, _, _, isResponse := readMetaFrame(parseContext, 1, framer, headersFrame(t, payload))
+	_, _, _, _, _, isResponse := readMetaFrame(parseContext, 1, framer, headersFrame(t, payload), nil)
 	assert.True(t, isResponse, "HEADERS opening with :status must be flagged as a response")
 }
 
@@ -280,26 +280,26 @@ func TestHTTP2ResponseDoesNotPolluteRequestTable(t *testing.T) {
 
 			// peer inserts (:path, /p1)
 			first := append([]byte{0x82}, indexedNameField(pathStaticIdx, "/p1")...)
-			_, path, _, _, _, isResponse := readMetaFrame(parseContext, 1, framer, headersFrame(t, first))
+			_, path, _, _, _, isResponse := readMetaFrame(parseContext, 1, framer, headersFrame(t, first), nil)
 			require.False(t, isResponse)
 			require.Equal(t, "/p1", path)
 
 			// a response lands on the same connection, inserting (:path, /bad) if it is decoded here
 			resp := append(append([]byte{}, tc.opener...), indexedNameField(pathStaticIdx, "/bad")...)
-			_, _, _, _, _, isResponse = readMetaFrame(parseContext, 1, framer, headersFrame(t, resp))
+			_, _, _, _, _, isResponse = readMetaFrame(parseContext, 1, framer, headersFrame(t, resp), nil)
 			require.True(t, isResponse)
 
 			// peer inserts (:path, /p2), so its own table holds /p2 at 62 and /p1 at 63
 			second := append([]byte{0x82}, indexedNameField(pathStaticIdx, "/p2")...)
-			_, path, _, _, _, _ = readMetaFrame(parseContext, 1, framer, headersFrame(t, second))
+			_, path, _, _, _, _ = readMetaFrame(parseContext, 1, framer, headersFrame(t, second), nil)
 			require.Equal(t, "/p2", path)
 
 			_, path, _, _, _, _ = readMetaFrame(parseContext, 1, framer,
-				headersFrame(t, []byte{0x82, mostRecentIdx}))
+				headersFrame(t, []byte{0x82, mostRecentIdx}), nil)
 			assert.Equal(t, "/p2", path, "entry 62 must be the peer's most recent insertion")
 
 			_, path, _, _, _, _ = readMetaFrame(parseContext, 1, framer,
-				headersFrame(t, []byte{0x82, secondIdx}))
+				headersFrame(t, []byte{0x82, secondIdx}), nil)
 			assert.Equal(t, "/p1", path, "entry 63 must be the peer's previous insertion, not the response")
 		})
 	}

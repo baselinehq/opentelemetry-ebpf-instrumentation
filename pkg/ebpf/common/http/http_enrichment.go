@@ -119,6 +119,11 @@ func (e *HTTPEnricher) Enrich(
 	return true
 }
 
+// EnrichRequestHeaders applies request header rules when no body was captured.
+func (e *HTTPEnricher) EnrichRequestHeaders(span *request.Span, headers http.Header) {
+	span.RequestHeaders = e.processHeaders(headers, config.HTTPParsingScopeRequest, span)
+}
+
 // processHeaders evaluates header rules and returns a map of headers to
 // include or obfuscate. The map is allocated lazily.
 func (e *HTTPEnricher) processHeaders(
