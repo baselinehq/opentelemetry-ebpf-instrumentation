@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 const (
@@ -29,26 +30,44 @@ const (
 	tlsGeneric
 )
 
-func classify(procFS string, pid int32, exePath string) tlsFlavour {
-	if hasGoTLSSymbols(exePath) {
+type executableID struct {
+	inodeKey
+	size, modified, changed int64
+}
+
+func executableIdentity(st *syscall.Stat_t) executableID {
+	return executableID{inodeKey{uint64(st.Dev), st.Ino}, st.Size, st.Mtim.Nano(), st.Ctim.Nano()}
+}
+
+func classify(procFS string, pid int32, exePath string, id executableID, cache map[executableID]bool) tlsFlavour {
+	goTLS, known := cache[id]
+	if !known {
+		var err error
+		goTLS, err = hasGoTLSSymbols(exePath)
+		if err == nil {
+			cache[id] = goTLS
+		}
+	}
+	if goTLS {
 		return tlsGo
 	}
+	// Libraries can be loaded after the executable was first inspected.
 	if mapsLibSSL(procFS, pid) {
 		return tlsGeneric
 	}
 	return tlsNone
 }
 
-func hasGoTLSSymbols(path string) bool {
+func hasGoTLSSymbols(path string) (bool, error) {
 	f, err := elf.Open(path)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer f.Close()
 
 	syms, err := f.Symbols()
 	if err == nil {
-		return elfHasAll(syms, goTLSWriteSymbol, goTLSReadSymbol)
+		return elfHasAll(syms, goTLSWriteSymbol, goTLSReadSymbol), nil
 	}
 	// Stripped Go executables retain the runtime function table.
 	text := f.Section(".text")
@@ -57,14 +76,17 @@ func hasGoTLSSymbols(path string) bool {
 		pcln = f.Section(".data.rel.ro.gopclntab")
 	}
 	if text == nil || pcln == nil {
-		return false
+		return false, nil
 	}
 	data, err := pcln.Data()
 	if err != nil {
-		return false
+		return false, err
 	}
 	table, err := gosym.NewTable(nil, gosym.NewLineTable(data, text.Addr))
-	return err == nil && table.LookupFunc(goTLSWriteSymbol) != nil && table.LookupFunc(goTLSReadSymbol) != nil
+	if err != nil {
+		return false, err
+	}
+	return table.LookupFunc(goTLSWriteSymbol) != nil && table.LookupFunc(goTLSReadSymbol) != nil, nil
 }
 
 func mapsLibSSL(procFS string, pid int32) bool {

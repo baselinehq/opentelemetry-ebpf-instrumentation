@@ -52,6 +52,7 @@ type Capture struct {
 	mu      sync.Mutex
 	seen    map[inodeKey]*obiebpf.Instrumentable
 	allowed map[int32]allowedProcess
+	goTLS   map[executableID]bool
 
 	closeOnce sync.Once
 }
@@ -105,6 +106,7 @@ func New(opts Options) (*Capture, error) {
 		records: make(chan []Exchange, channelBufferLen),
 		seen:    make(map[inodeKey]*obiebpf.Instrumentable),
 		allowed: make(map[int32]allowedProcess),
+		goTLS:   make(map[executableID]bool),
 	}, nil
 }
 
@@ -205,15 +207,21 @@ func (c *Capture) Scan() int {
 		return 0
 	}
 
+	live := make(map[executableID]struct{})
 	attached := 0
 	for _, pid := range pids {
-		ok, err := c.attachPID(pid)
+		ok, err := c.attachPID(pid, live)
 		if err != nil {
 			slog.Debug("obicapture: skipping process", "pid", pid, "error", err)
 			continue
 		}
 		if ok {
 			attached++
+		}
+	}
+	for id := range c.goTLS {
+		if _, ok := live[id]; !ok {
+			delete(c.goTLS, id)
 		}
 	}
 	allowedPIDs := len(c.allowed)
@@ -233,7 +241,7 @@ func (c *Capture) Scan() int {
 	return attached
 }
 
-func (c *Capture) attachPID(pid int32) (bool, error) {
+func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, error) {
 	exePath := filepath.Join(c.procFS, strconv.Itoa(int(pid)), "exe")
 
 	st, err := os.Stat(exePath)
@@ -245,6 +253,8 @@ func (c *Capture) attachPID(pid int32) (bool, error) {
 		return false, fmt.Errorf("unexpected stat type")
 	}
 	key := inodeKey{dev: uint64(sys.Dev), ino: sys.Ino}
+	id := executableIdentity(sys)
+	live[id] = struct{}{}
 
 	existing, inodeKnown := c.seen[key]
 	process, pidKnown := c.allowed[pid]
@@ -252,7 +262,7 @@ func (c *Capture) attachPID(pid int32) (bool, error) {
 		return false, nil
 	}
 
-	flavour := classify(c.procFS, pid, exePath)
+	flavour := classify(c.procFS, pid, exePath, id, c.goTLS)
 	if flavour == tlsNone {
 		return false, nil
 	}
