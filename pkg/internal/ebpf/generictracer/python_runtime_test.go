@@ -6,7 +6,9 @@
 package generictracer
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -53,23 +55,23 @@ func TestPythonRuntimeBPFObjects(t *testing.T) {
 }
 
 func TestPythonRuntimeProbeAttachmentOptions(t *testing.T) {
-	usdt, returnProbe, err := pythonRuntimeUprobeOptions(123, cpythonruntime.GCCompletionProbe{
+	usdt, err := pythonRuntimeUprobeOptions(123, cpythonruntime.GCCompletionProbe{
 		Kind: cpythonruntime.GCCompletionProbeUSDT, FileOffset: 0x200, SemaphoreOffset: 0x300,
 	})
 	require.NoError(t, err)
-	assert.False(t, returnProbe)
-	assert.Equal(t, uint64(0x200), usdt.Address)
+	assert.False(t, usdt.Return)
+	assert.Equal(t, []uint64{0x200}, usdt.Addresses)
 	assert.Equal(t, uint64(0x300), usdt.RefCtrOffset)
-	assert.Equal(t, 123, usdt.PID)
+	assert.Equal(t, uint32(123), usdt.PID)
 
-	private, returnProbe, err := pythonRuntimeUprobeOptions(456, cpythonruntime.GCCompletionProbe{
+	private, err := pythonRuntimeUprobeOptions(456, cpythonruntime.GCCompletionProbe{
 		Kind: cpythonruntime.GCCompletionProbePrivateReturn, FileOffset: 0x400,
 	})
 	require.NoError(t, err)
-	assert.True(t, returnProbe)
-	assert.Equal(t, uint64(0x400), private.Address)
+	assert.True(t, private.Return)
+	assert.Equal(t, []uint64{0x400}, private.Addresses)
 	assert.Zero(t, private.RefCtrOffset)
-	assert.Equal(t, 456, private.PID)
+	assert.Equal(t, uint32(456), private.PID)
 }
 
 func TestPythonRuntimeAllowIsIdempotent(t *testing.T) {
@@ -100,8 +102,8 @@ func TestPythonRuntimeResolutionFailureDoesNotRetry(t *testing.T) {
 
 func TestPythonRuntimeAttachmentFailureRollsBackMapState(t *testing.T) {
 	controller, _, targets, snapshots := pythonRuntimeTestController()
-	controller.attach = func(*cpythonruntime.MetricTarget, *ebpf.Program, int) (io.Closer, error) {
-		return nil, errors.New("attach failed")
+	controller.attach = func(*cpythonruntime.MetricTarget, *ebpf.Program, int) (io.Closer, cpythonruntime.GCCompletionProbe, error) {
+		return nil, cpythonruntime.GCCompletionProbe{}, errors.New("attach failed")
 	}
 	lifecycle := pythonRuntimeTestFile(123, 100)
 
@@ -113,6 +115,59 @@ func TestPythonRuntimeAttachmentFailureRollsBackMapState(t *testing.T) {
 	}, time.Second, time.Millisecond)
 	assert.False(t, targets.hasEntries())
 	assert.False(t, snapshots.hasEntries())
+}
+
+func TestPythonRuntimeAttachmentLogUsesAttachedProbe(t *testing.T) {
+	for _, fallback := range []bool{false, true} {
+		name := "primary"
+		if fallback {
+			name = "fallback"
+		}
+		t.Run(name, func(t *testing.T) {
+			controller, resolver, _, _ := pythonRuntimeTestController()
+			defer controller.close()
+			primary := cpythonruntime.GCCompletionProbe{
+				Kind:       cpythonruntime.GCCompletionProbeUSDT,
+				Source:     cpythonruntime.GCCompletionProbeSourceUSDT,
+				FileOffset: 0x200,
+			}
+			secondary := cpythonruntime.GCCompletionProbe{
+				Kind:       cpythonruntime.GCCompletionProbePrivateReturn,
+				Source:     cpythonruntime.GCCompletionProbeSourceDerived,
+				FileOffset: 0x400,
+			}
+			resolver.target.PrimaryProbe = primary
+			resolver.target.FallbackProbe = &secondary
+			probe := primary
+			wantKind, wantSource, wantOffset := "usdt", "usdt", "0x200"
+			if fallback {
+				probe = secondary
+				wantKind, wantSource, wantOffset = "private-return", "derived", "0x400"
+			}
+			controller.attach = func(*cpythonruntime.MetricTarget, *ebpf.Program, int) (io.Closer, cpythonruntime.GCCompletionProbe, error) {
+				return &testCloser{}, probe, nil
+			}
+			var logs bytes.Buffer
+			controller.tracer.log = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+			pid := app.PID(os.Getpid())
+			lifecycle := pythonRuntimeTestFile(pid, 100)
+			controller.allow(pid, 42, lifecycle, lifecycle)
+			require.Eventually(t, func() bool {
+				controller.mu.Lock()
+				defer controller.mu.Unlock()
+				target := controller.targets[pid]
+				return target != nil && target.link != nil
+			}, time.Second, time.Millisecond)
+			controller.close()
+
+			var record map[string]any
+			require.NoError(t, json.Unmarshal(logs.Bytes(), &record))
+			assert.Equal(t, "Python runtime metrics attached", record["msg"])
+			assert.Equal(t, wantKind, record["probe"])
+			assert.Equal(t, wantSource, record["source"])
+			assert.Equal(t, wantOffset, record["offset"])
+		})
+	}
 }
 
 func TestPythonRuntimeBlockRemovesExactLifecycle(t *testing.T) {
@@ -225,8 +280,8 @@ func pythonRuntimeTestController() (
 	controller := &pythonRuntimeController{
 		tracer: tracer, resolver: resolver,
 		targetMap: targets, snapshotMap: snapshots,
-		attach: func(*cpythonruntime.MetricTarget, *ebpf.Program, int) (io.Closer, error) {
-			return &testCloser{}, nil
+		attach: func(target *cpythonruntime.MetricTarget, _ *ebpf.Program, _ int) (io.Closer, cpythonruntime.GCCompletionProbe, error) {
+			return &testCloser{}, target.PrimaryProbe, nil
 		},
 		startTime: func(app.PID) (uint64, error) { return 100, nil },
 		targets:   map[app.PID]*pythonRuntimeLifecycle{},

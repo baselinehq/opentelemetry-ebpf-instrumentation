@@ -65,6 +65,35 @@ versions:
 Released files are immutable — never edit a `<version>` file once it has shipped;
 only add new ones.
 
+### Pending transformations
+
+A change that renames or removes emitted telemetry lands before the version that
+ships it exists, so it records the transformation here and the release owner drains
+this list into the new `<version>:` block at release prep. Leave the section empty
+once drained.
+
+```yaml
+all:
+  changes:
+    - rename_attributes:
+        attribute_map:
+          obi.error: error.type
+```
+
+### Pending release notes
+
+Breaking changes to emitted telemetry the schema cannot express: the format describes the
+OTLP output only, and has no operation for dropping something. Keep them out of the block
+above — copying them into a `<version>` file would corrupt a published, immutable schema.
+The release owner drains this list into the release notes at release prep, and leaves the
+section empty once drained.
+
+- The Prometheus `traces_host_info` metric labels the host id `host_id` instead of
+  `cloud_host_id`, matching the `host.id` the OTLP exporter reports and the `host_id`
+  that `target_info` already carried. Dashboards selecting
+  `traces_host_info{cloud_host_id=...}` must be updated. A component vendoring OBI that
+  assigns to `prom.CloudHostIDKey` keeps its own label name.
+
 ## Hosting notes
 
 `site/` is published as static files with no markdown processing, so the generated

@@ -8,6 +8,7 @@ package generictracer
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 	"time"
 	"unsafe"
@@ -247,6 +248,21 @@ func TestJVMBPFMapsAreInternallyPinnedAndUseSharedEventsRingBuffer(t *testing.T)
 	assert.Equal(t, ebpf.LRUHash, spec.Maps["obi_usdt_ip_to_spec_id"].Type)
 }
 
+func TestPythonAsyncMapsScopePointersByProcess(t *testing.T) {
+	spec, err := LoadBpf()
+	require.NoError(t, err)
+
+	const pythonAddrKeySize = uint32(unsafe.Sizeof(struct {
+		PID  uint64
+		Addr uint64
+	}{}))
+
+	for _, name := range []string{"python_context_task", "python_task_state"} {
+		require.Contains(t, spec.Maps, name)
+		assert.Equal(t, pythonAddrKeySize, spec.Maps[name].KeySize)
+	}
+}
+
 func TestJVMRuntimeMetricsExposeHotSpotUSDTProbes(t *testing.T) {
 	tracer := Tracer{cfg: &obi.Config{}}
 	assert.Empty(t, tracer.USDTProbes())
@@ -318,6 +334,36 @@ func TestJVMRuntimeMetricsConstantOverridesUseApplicationRuntimeAsFeatureGate(t 
 func TestRawJVMEventLayoutsUseGeneratedBPFStructs(t *testing.T) {
 	assert.Equal(t, 200, int(unsafe.Sizeof(BpfJvmMemPoolGcEvent{})))
 	assert.Equal(t, 104, int(unsafe.Sizeof(BpfJvmRuntimeMetricsEvent{})))
+	assert.Equal(t, 176, int(unsafe.Sizeof(BpfJvmGcDurationEvent{})))
+}
+
+func TestParseJVMGCDurationRecord(t *testing.T) {
+	service := svc.Attrs{UID: svc.UID{Name: "orders", Namespace: "prod"}}
+	tracer := &Tracer{pidsFilter: fakeServiceFilter{current: map[uint32]map[app.PID]svc.Attrs{
+		99: {55: service},
+	}}}
+
+	event, ignore, err := tracer.parseJVMGCDurationRecord(&ringbuf.Record{RawSample: rawPayload(
+		BpfJvmGcDurationEvent{
+			Timestamp:     12345,
+			NsPid:         55,
+			PidNsId:       99,
+			DurationNs:    25_000_000,
+			CollectorName: rawJVMString("G1 Young Generation"),
+			Action:        rawJVMString("end of minor GC"),
+		},
+	)})
+
+	require.NoError(t, err)
+	assert.False(t, ignore)
+	assert.Equal(t, service, event.Service)
+	assert.Equal(t, app.PID(55), event.PID)
+	assert.Equal(t, uint32(99), event.PIDNamespaceID)
+	assert.Equal(t, jvmruntime.JVMMetricGCDuration, event.Kind)
+	assert.Equal(t, "G1 Young Generation", event.GCName)
+	assert.Equal(t, "end of minor GC", event.GCAction)
+	assert.Equal(t, uint64(25_000_000), event.DurationNS)
+	assert.False(t, event.Time.IsZero())
 }
 
 func TestParseJVMRuntimeRecordUsesGeneratedBPFStruct(t *testing.T) {
@@ -417,6 +463,23 @@ func readJVMTestBatch(t *testing.T, events <-chan []runtimemetrics.RuntimeMetric
 		t.Fatal("timed out waiting for JVM runtime events")
 		return nil
 	}
+}
+
+// The libruby probes sit on symbols the Ruby runtime exercises as a whole, and
+// they can only ever correlate on Puma below Ruby 4.0, so the library they are
+// declared under must carry the version constraint that gates them.
+func TestRubyUProbesAreVersionGated(t *testing.T) {
+	tracer := &Tracer{}
+
+	var rubyKeys []string
+	for lib := range tracer.UProbes() {
+		if strings.HasPrefix(lib, "libruby") {
+			rubyKeys = append(rubyKeys, lib)
+		}
+	}
+
+	require.Len(t, rubyKeys, 1, "exactly one libruby probe group")
+	assert.Equal(t, "libruby[< 4.0]", rubyKeys[0])
 }
 
 type fakeServiceFilter struct {

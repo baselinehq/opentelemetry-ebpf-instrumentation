@@ -147,7 +147,7 @@ func resourceAttrs(nodeMeta *meta.NodeMeta, service *svc.Attrs) []attribute.KeyV
 		semconv.TelemetrySDKNameKey.String(attr.VendorSDKName),
 		semconv.TelemetrySDKVersion(attr.VendorSDKVersion),
 		semconv.TelemetryDistroName(attr.TelemetryDistroName),
-		semconv.TelemetryDistroVersion(attr.TelemetryDistroVersion),
+		semconv.TelemetryDistroVersion(attr.TelemetryDistroVersion()),
 		semconv.HostName(service.HostName),
 		semconv.HostID(nodeMeta.HostID),
 		semconv.OSTypeLinux,
@@ -256,7 +256,6 @@ type ReporterPool[K uidGetter, T any] struct {
 	lastService    uidGetter
 	lastServiceUID svc.UID
 
-	// TODO: use cacheable clock for efficiency
 	clock          expire.Clock
 	ttl            time.Duration
 	lastExpiration time.Time

@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/obi/pkg/appolly/app/svc"
 	"go.opentelemetry.io/obi/pkg/appolly/discover/exec"
 	cpythonruntime "go.opentelemetry.io/obi/pkg/internal/cpython/runtime"
+	"go.opentelemetry.io/obi/pkg/internal/ebpf/uprobe"
 	"go.opentelemetry.io/obi/pkg/internal/procs"
 )
 
@@ -58,7 +59,7 @@ type pythonRuntimeController struct {
 	resolver    pythonRuntimeTargetResolver
 	targetMap   pythonRuntimeMap
 	snapshotMap pythonRuntimeMap
-	attach      func(*cpythonruntime.MetricTarget, *ebpf.Program, int) (io.Closer, error)
+	attach      func(*cpythonruntime.MetricTarget, *ebpf.Program, int) (io.Closer, cpythonruntime.GCCompletionProbe, error)
 	startTime   func(app.PID) (uint64, error)
 
 	mu      sync.Mutex
@@ -198,14 +199,14 @@ func (c *pythonRuntimeController) resolveAndAttach(ctx context.Context, target *
 		return
 	}
 
-	attached, err := c.attach(
+	attached, probe, err := c.attach(
 		metricTarget, c.tracer.bpfObjects.ObiUprobePythonGcDone, int(target.pid))
 	if err != nil {
 		_ = targets.Delete(key)
 		_ = snapshots.Delete(key)
 		delete(c.targets, target.pid)
 		c.tracer.log.Warn("Python runtime metrics probe attachment failed",
-			"pid", target.pid, "probe", metricTarget.PrimaryProbe.Kind, "error", err)
+			"pid", target.pid, "probe", metricTarget.PrimaryProbe.Kind.String(), "error", err)
 		return
 	}
 	currentStartTime, err := c.startTime(target.pid)
@@ -219,31 +220,32 @@ func (c *pythonRuntimeController) resolveAndAttach(ctx context.Context, target *
 	target.link = attached
 	c.tracer.log.Debug("Python runtime metrics attached",
 		"pid", target.pid,
-		"probe", metricTarget.PrimaryProbe.Kind,
-		"offset", fmt.Sprintf("%#x", metricTarget.PrimaryProbe.FileOffset))
+		"probe", probe.Kind.String(),
+		"source", probe.Source,
+		"offset", fmt.Sprintf("%#x", probe.FileOffset))
 }
 
 // attachPythonRuntimeTarget attaches to the stable mapped object and safe fallback.
-func attachPythonRuntimeTarget(target *cpythonruntime.MetricTarget, program *ebpf.Program, pid int) (io.Closer, error) {
+func attachPythonRuntimeTarget(target *cpythonruntime.MetricTarget, program *ebpf.Program, pid int) (io.Closer, cpythonruntime.GCCompletionProbe, error) {
 	if target == nil || program == nil || target.AttachmentPath() == "" {
-		return nil, errors.New("incomplete Python runtime metric target")
+		return nil, cpythonruntime.GCCompletionProbe{}, errors.New("incomplete Python runtime metric target")
 	}
 	executable, err := link.OpenExecutable(target.AttachmentPath())
 	if err != nil {
-		return nil, err
+		return nil, cpythonruntime.GCCompletionProbe{}, err
 	}
 	attached, err := attachPythonRuntimeProbe(executable, program, pid, target.PrimaryProbe)
 	if err == nil {
-		return attached, nil
+		return attached, target.PrimaryProbe, nil
 	}
 	if target.FallbackProbe == nil {
-		return nil, err
+		return nil, cpythonruntime.GCCompletionProbe{}, err
 	}
 	fallback, fallbackErr := attachPythonRuntimeProbe(executable, program, pid, *target.FallbackProbe)
 	if fallbackErr != nil {
-		return nil, errors.Join(err, fallbackErr)
+		return nil, cpythonruntime.GCCompletionProbe{}, errors.Join(err, fallbackErr)
 	}
-	return fallback, nil
+	return fallback, *target.FallbackProbe, nil
 }
 
 // attachPythonRuntimeProbe selects an entry or return probe at a raw offset.
@@ -252,31 +254,29 @@ func attachPythonRuntimeProbe(
 	program *ebpf.Program,
 	pid int,
 	probe cpythonruntime.GCCompletionProbe,
-) (link.Link, error) {
-	options, returnProbe, err := pythonRuntimeUprobeOptions(pid, probe)
+) (io.Closer, error) {
+	options, err := pythonRuntimeUprobeOptions(pid, probe)
 	if err != nil {
 		return nil, err
 	}
-	if !returnProbe {
-		return executable.Uprobe("", program, options)
-	}
-	return executable.Uretprobe("", program, options)
+	return uprobe.Attach(executable, program, options)
 }
 
-// pythonRuntimeUprobeOptions converts a resolved GC completion probe into link options.
+// pythonRuntimeUprobeOptions converts a resolved GC completion probe into attach options.
 func pythonRuntimeUprobeOptions(
 	pid int,
 	probe cpythonruntime.GCCompletionProbe,
-) (*link.UprobeOptions, bool, error) {
-	options := &link.UprobeOptions{Address: probe.FileOffset, PID: pid}
+) (uprobe.Options, error) {
+	options := uprobe.Options{Addresses: []uint64{probe.FileOffset}, PID: uint32(pid)}
 	switch probe.Kind {
 	case cpythonruntime.GCCompletionProbeUSDT:
 		options.RefCtrOffset = probe.SemaphoreOffset
-		return options, false, nil
+		return options, nil
 	case cpythonruntime.GCCompletionProbePrivateReturn:
-		return options, true, nil
+		options.Return = true
+		return options, nil
 	default:
-		return nil, false, errors.New("unknown Python runtime GC completion probe")
+		return uprobe.Options{}, errors.New("unknown Python runtime GC completion probe")
 	}
 }
 

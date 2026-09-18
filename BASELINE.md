@@ -1,7 +1,10 @@
 # Baseline capture fork
 
-`baseline/capture-v0.13.0` is based on upstream **v0.13.0**. The module remains
-`go.opentelemetry.io/obi`; retain upstream import paths when merging updates.
+`baseline/capture-v0.13.0` started from upstream **v0.13.0** and now includes
+upstream `main` through `19d50c454eb266dc8c05ecf9ff724caaef3cd5e7` (merged from
+the fork's `main` on 2026-09-18). The branch name is retained for existing consumers.
+The module remains `go.opentelemetry.io/obi`; retain upstream import paths when
+merging updates.
 
 ## Boundary
 

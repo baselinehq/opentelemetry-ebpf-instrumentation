@@ -43,6 +43,8 @@ func TestPrometheusNames(t *testing.T) {
 		{GenAIClientInputTokenUsage, "gen_ai_client_token_usage"},
 		{GenAIClientOutputTokenUsage, "gen_ai_client_token_usage"},
 		{GenAIClientOperationDuration, "gen_ai_client_operation_duration_seconds"},
+		{MCPClientOperationDuration, "mcp_client_operation_duration_seconds"},
+		{MCPServerOperationDuration, "mcp_server_operation_duration_seconds"},
 		{GoRuntimeMemoryLimit, "go_memory_limit_bytes"},
 		{GoRuntimeMemoryGCGoal, "go_memory_gc_goal_bytes"},
 		{GoRuntimeMemoryGCCycles, "go_memory_gc_cycles_total"},
@@ -55,6 +57,7 @@ func TestPrometheusNames(t *testing.T) {
 		{GoRuntimeProcessorLimit, "go_processor_limit"},
 		{GoRuntimeConfigGOGC, "go_config_gogc_percent"},
 		{GoRuntimeScheduleDuration, "go_schedule_duration_seconds"},
+		{DotnetGCCollections, "dotnet_gc_collections_total"},
 		{JVMMemoryUsed, "jvm_memory_used_bytes"},
 		{JVMMemoryCommitted, "jvm_memory_committed_bytes"},
 		{JVMMemoryLimit, "jvm_memory_limit_bytes"},
@@ -76,6 +79,8 @@ func TestPrometheusNames(t *testing.T) {
 		{V8JSMemoryHeapUsed, "v8js_memory_heap_used_bytes"},
 		{V8JSMemoryHeapSpaceAvailableSize, "v8js_memory_heap_space_available_size_bytes"},
 		{V8JSMemoryHeapSpacePhysicalSize, "v8js_memory_heap_space_physical_size_bytes"},
+		// the {resource} annotation unit adds no suffix
+		{V8JSResourceActive, "v8js_resource_active"},
 	}
 
 	for _, test := range tests {

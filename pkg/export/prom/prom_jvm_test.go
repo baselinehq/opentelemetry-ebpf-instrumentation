@@ -55,6 +55,7 @@ func testJVMRuntimeMemoryPool(t *testing.T) {
 		"service_name":         "orders",
 		"service_namespace":    "prod",
 		"service_instance_id":  "orders-1",
+		"job":                  "prod/orders",
 		"jvm_memory_type":      "heap",
 		"jvm_memory_pool_name": "G1 Old Gen",
 	})
@@ -81,6 +82,27 @@ func testJVMRuntimeCurrentValues(t *testing.T) {
 		RecentCPUUtilization:    0.25,
 	}
 	reporter.collectRuntimeMetrics([]runtimemetrics.RuntimeMetricSnapshot{{
+		Service: service,
+		JVM: &runtimemetrics.JVMRuntimeMetricSnapshot{
+			Kind:       jvmruntime.JVMMetricGCDuration,
+			GCName:     "G1 Young Generation",
+			GCAction:   "end of minor GC",
+			DurationNS: 25_000_000,
+		},
+	}})
+	gcDuration := gatheredMetric(t, registry, "jvm_gc_duration_seconds", map[string]string{
+		"service_name":        "orders",
+		"service_namespace":   "prod",
+		"service_instance_id": "orders-1",
+		"job":                 "prod/orders",
+		"jvm_gc_name":         "G1 Young Generation",
+		"jvm_gc_action":       "end of minor GC",
+	})
+	require.NotNil(t, gcDuration)
+	assert.Equal(t, uint64(1), gcDuration.GetHistogram().GetSampleCount())
+	assert.InEpsilon(t, 0.025, gcDuration.GetHistogram().GetSampleSum(), 0)
+
+	reporter.collectRuntimeMetrics([]runtimemetrics.RuntimeMetricSnapshot{{
 		Service:    service,
 		Generation: 1,
 		JVM:        &runtimemetrics.JVMRuntimeMetricSnapshot{RuntimeValues: &values},
@@ -99,6 +121,7 @@ func testJVMRuntimeCurrentValues(t *testing.T) {
 			"service_name":        "orders",
 			"service_namespace":   "prod",
 			"service_instance_id": "orders-1",
+			"job":                 "prod/orders",
 			"jvm_thread_daemon":   "true",
 		}).GetGauge().GetValue(), 0)
 	assert.InEpsilon(t, 6.0,
@@ -106,6 +129,7 @@ func testJVMRuntimeCurrentValues(t *testing.T) {
 			"service_name":        "orders",
 			"service_namespace":   "prod",
 			"service_instance_id": "orders-1",
+			"job":                 "prod/orders",
 			"jvm_thread_daemon":   "false",
 		}).GetGauge().GetValue(), 0)
 	assert.InEpsilon(t, 2.0,
@@ -287,6 +311,7 @@ func jvmRuntimeMetricsTestLabels() map[string]string {
 		"service_name":        "orders",
 		"service_namespace":   "prod",
 		"service_instance_id": "orders-1",
+		"job":                 "prod/orders",
 	}
 }
 
@@ -333,6 +358,7 @@ func TestRuntimeMetricsReporterDropsJVMServiceWithoutRuntimeFeature(t *testing.T
 		"service_name":         "orders",
 		"service_namespace":    "prod",
 		"service_instance_id":  "orders-1",
+		"job":                  "prod/orders",
 		"jvm_memory_type":      "heap",
 		"jvm_memory_pool_name": "G1 Old Gen",
 	}))
@@ -378,6 +404,7 @@ func TestRuntimeMetricsKeepServiceLabelsRegardlessOfDefaults(t *testing.T) {
 		"service_name":         "orders",
 		"service_namespace":    "prod",
 		"service_instance_id":  "orders-1",
+		"job":                  "prod/orders",
 		"jvm_memory_type":      "heap",
 		"jvm_memory_pool_name": "G1 Old Gen",
 	})

@@ -7,9 +7,10 @@ import (
 	"strconv"
 
 	"go.opentelemetry.io/obi/pkg/ebpf/common/dnsparser"
+	"go.opentelemetry.io/obi/pkg/internal/errtype"
 )
 
-const ErrorTypeOther = "_OTHER"
+const ErrorTypeOther = errtype.Other
 
 // SpanErrorType returns error.type for a failed span, or "" when the span did
 // not fail. It is the single source for the trace and the metric pipeline.
@@ -43,6 +44,9 @@ func SpanErrorType(span *Span) string {
 // parsedErrorType reports the error a protocol parser extracted from the
 // payload, which some protocols report inside a 2xx response.
 func parsedErrorType(span *Span) string {
+	if span.Type == EventTypeHTTPClient && span.SubType == HTTPSubtypeAWSSNS && span.AWS != nil && span.AWS.SNS.ErrorCode != "" {
+		return span.AWS.SNS.ErrorCode
+	}
 	if span.DBError.ErrorCode != "" {
 		return span.DBError.ErrorCode
 	}
@@ -63,9 +67,8 @@ func parsedErrorType(span *Span) string {
 	if span.SubType == HTTPSubtypeJSONRPC && span.JSONRPC != nil && span.JSONRPC.ErrorCode != 0 {
 		return strconv.Itoa(span.JSONRPC.ErrorCode)
 	}
-	if span.SubType == HTTPSubtypeMCP && span.GenAI != nil && span.GenAI.MCP != nil &&
-		span.GenAI.MCP.ErrorCode != 0 {
-		return strconv.Itoa(span.GenAI.MCP.ErrorCode)
+	if mcp := span.MCP(); mcp != nil && mcp.ErrorCode != 0 {
+		return strconv.Itoa(mcp.ErrorCode)
 	}
 
 	return ""

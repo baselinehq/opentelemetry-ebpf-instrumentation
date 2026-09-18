@@ -28,6 +28,7 @@ through language-specific library instrumentation documented later in this file.
 | Opensearch    |    All    |      3.0.0+ | /_search, /_msearch, /_bulk, /_doc                                                       |  Yes   |                 No | Requires HTTP payload capture (`OTEL_EBPF_BPF_BUFFER_SIZE_HTTP`)
 | AWS S3        |    All    |         All | CreateBucket, DeleteBucket, PutObject, DeleteObject, ListBuckets, ListObjects, GetObject |  Yes   |                 No | Requires HTTP payload capture (`OTEL_EBPF_BPF_BUFFER_SIZE_HTTP`)
 | AWS SQS       |    All    |         All | All                                                                                      |  Yes   |                 No | Requires HTTP payload capture (`OTEL_EBPF_BPF_BUFFER_SIZE_HTTP`)
+| AWS SNS       |    All    |         All | [Supported operations](protocols/aws.md#supported-sns-operations)                          |  Yes   |                 No | Requires HTTP payload capture (`OTEL_EBPF_BPF_BUFFER_SIZE_HTTP`)
 | SQL++         |    All    |         All | All                                                                                      |  Yes   |                 No | Requires HTTP payload capture (`OTEL_EBPF_BPF_BUFFER_SIZE_HTTP`)
 | GenAI         |    All    |         All | All                                                                                      |  Yes   |                 No |                                                   Supported vendors: OpenAI, Anthropic, Google AI Studio (Gemini), AWS Bedrock, Qwen (DashScope), generic embedding providers (Voyage AI, Cohere, Jina AI), Cohere (Rerank), Jina AI (Rerank), Voyage AI (Rerank), Qwen (DashScope) (Rerank), Ollama (native /api/chat and /api/generate), OpenAI-compatible gateways (LiteLLM, vLLM, LocalAI, OpenRouter, Ollama /v1/), vector retrieval (Pinecone, Qdrant, Milvus, Zilliz, Chroma, Weaviate), MCP. Requires HTTP payload capture.
 
@@ -151,8 +152,10 @@ Equivalent YAML keys live under `ebpf.buffer_sizes.{http,mysql,kafka,postgres,ms
 
 Since OBI v0.12.1, OBI can capture spans that a Node.js application creates through `@opentelemetry/api` when no
 OpenTelemetry SDK is registered. Opt-in: `nodejs.manual_spans: true` or `OTEL_EBPF_NODEJS_MANUAL_SPANS=true`. The
-Node.js inspector must be reachable, and the process must not register its own `SIGUSR1` handler. If the application
-registers an SDK, OBI leaves span creation to that SDK.
+Node.js inspector must be reachable, and OBI must be able to open it: it withholds `SIGUSR1` unless the process is
+provably a Node.js runtime that the signal cannot terminate and that registers no handler of its own (see
+[runtimes/nodejs.md](runtimes/nodejs.md) for the full list of refusal reasons). If the application registers an SDK,
+OBI leaves span creation to that SDK.
 
 See [nodejs-manual-spans.md](nodejs-manual-spans.md).
 
@@ -181,4 +184,4 @@ OBI has support for several asynchronous frameworks that allow it to propagate c
 | Ruby Puma Server    |   Ruby    |              N/A | Only works with Puma server                       | Stable
 | Java Thread pool    |   Java    |           JDK 8+ | Parent lookup walks up to 3 thread-nesting levels | Stable
 | Java Virtual Threads |  Java    |          JDK 21+ | Log enrichment is skipped on virtual threads      | Stable
-| Python asyncio      |  Python   |    Python >= 3.9 | Only works with uvloop event loop                 | Stable
+| Python asyncio      |  Python   | GIL-enabled, 64-bit CPython 3.9 through 3.14 | Free-threaded builds are unsupported; `asyncio.start_server()` is not correlated under uvloop; mutated contexts and cancelled `to_thread` tasks may lose correlation | Stable
