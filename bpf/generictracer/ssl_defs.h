@@ -7,6 +7,7 @@
 #include <bpfcore/bpf_helpers.h>
 
 #include <common/ssl_args.h>
+#include <common/tls_h2_capture.h>
 #include <common/trace_key.h>
 #include <common/trace_lifecycle.h>
 
@@ -38,6 +39,8 @@ finish_possible_delayed_tls_http_request(pid_connection_info_t *pid_conn) {
 // Everything here is keyed on the SSL, so releasing twice is harmless: the
 // second call finds nothing left and emits no event.
 static __always_inline void ssl_release_connection_state(u64 id, void *s) {
+    go_addr_key_t key = {.pid = pid_from_pid_tgid(id), .addr = (u64)s};
+    tls_h2_close(&key);
     ssl_pid_connection_info_t *s_conn = bpf_map_lookup_elem(&ssl_to_conn, &s);
     if (s_conn) {
         finish_possible_delayed_tls_http_request(&s_conn->p_conn);
@@ -123,6 +126,23 @@ handle_ssl_buf(void *ctx, u64 id, ssl_args_t *args, int bytes_len, u8 direction)
             bpf_dbg_printk("SSL conn");
             dbg_print_http_connection_info(&conn->p_conn.conn);
 
+            // SSL-to-connection metadata is sorted; recover local orientation.
+            connection_info_t local = conn->p_conn.conn;
+            if (local.d_port != conn->orig_dport) {
+                u16 port = local.s_port;
+                local.s_port = local.d_port;
+                local.d_port = port;
+                u8 addr[16];
+                __builtin_memcpy(addr, local.s_addr, 16);
+                __builtin_memcpy(local.s_addr, local.d_addr, 16);
+                __builtin_memcpy(local.d_addr, addr, 16);
+            }
+            go_addr_key_t operation = {.pid = pid_from_pid_tgid(id), .addr = id};
+            if (local.s_port && local.d_port &&
+                tls_h2_enter(&operation, ssl, (void *)args->buf, bytes_len, &local, direction)) {
+                tls_h2_return(&operation, bytes_len);
+                return;
+            }
             // must be last, doesn't return
             handle_buf_with_connection(ctx,
                                        &conn->p_conn,

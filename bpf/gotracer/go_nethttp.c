@@ -1302,7 +1302,7 @@ static __always_inline void setup_http2_client_conn(void *goroutine_addr,
                 bpf_map_update_elem(
                     &go_http2_client_connections, &sorted_conn, &(bool){true}, BPF_ANY);
                 store_go_handled_connection_info_sorted(&sorted_conn);
-                cleanup_ongoing_large_buffer_sorted_conn(&sorted_conn, stream_id);
+                cleanup_ongoing_large_buffer(&conn, stream_id);
             }
         }
 
@@ -1855,7 +1855,7 @@ int GUARDED_PROG(obi_uprobe_persistConnRoundTrip, struct pt_regs *, ctx) {
                 connection_info_t sorted_conn = conn;
                 sort_connection_info(&sorted_conn);
                 store_go_handled_connection_info_sorted(&sorted_conn);
-                cleanup_ongoing_large_buffer_sorted_conn(&sorted_conn, 0);
+                cleanup_ongoing_large_buffer(&conn, 0);
 
                 // Must sort the connection info, this map is shared with kprobes which use sorted connection
                 // info always.

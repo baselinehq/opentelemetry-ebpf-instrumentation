@@ -479,6 +479,7 @@ func (p *Tracer) constants() map[string]any {
 		m["high_request_volume"] = uint32(0)
 	}
 
+	m["tls_h2_capture_enabled"] = p.cfg.TLSHTTP2Capture
 	m["http_max_captured_bytes"] = p.cfg.BufferSizes.HTTP
 	m["tcp_max_captured_bytes"] = p.cfg.BufferSizes.TCP
 	m["mysql_max_captured_bytes"] = p.cfg.BufferSizes.MySQL
@@ -523,6 +524,10 @@ func (p *Tracer) SetupTailCalls() {
 }
 
 func (p *Tracer) RegisterOffsets(fileInfo *exec.FileInfo, offsets *goexec.Offsets) {
+	if offsets == nil {
+		return
+	}
+
 	p.recordGoChannelOffsetAvailability(fileInfo, offsets)
 
 	offTable := BpfOffTableT{}
@@ -1703,6 +1708,7 @@ func (p *Tracer) GoProbes() map[string][]*ebpfcommon.ProbeDesc {
 		"net.(*netFD).Write": {{
 			Start: p.bpfObjects.ObiUprobeNetFdWrite,
 		}},
+		"crypto/tls.(*Conn).Close": {{Start: p.bpfObjects.ObiUprobeCryptoTlsClose}},
 		"crypto/tls.(*Conn).Read": {{
 			Start: p.bpfObjects.ObiUprobeCryptoTlsRead,
 			End:   p.bpfObjects.ObiUprobeCryptoTlsReadRet,

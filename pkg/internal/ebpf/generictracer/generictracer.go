@@ -301,6 +301,7 @@ func (p *Tracer) constants() map[string]any {
 	// gates the bpf_loop paths; unset it defaults to false and const-DCE drops them
 	m["g_bpf_loop_enabled"] = ebpfcommon.SupportsEBPFLoops(p.log, p.cfg.EBPF.OverrideBPFLoopEnabled)
 
+	m["tls_h2_capture_enabled"] = p.cfg.EBPF.TLSHTTP2Capture
 	m["http_max_captured_bytes"] = p.cfg.EBPF.BufferSizes.HTTP
 	m["tcp_max_captured_bytes"] = p.cfg.EBPF.BufferSizes.TCP
 	m["mysql_max_captured_bytes"] = p.cfg.EBPF.BufferSizes.MySQL

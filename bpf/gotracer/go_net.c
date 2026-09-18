@@ -224,6 +224,7 @@ int GUARDED_PROG(obi_uprobe_netFdWrite, struct pt_regs *, ctx) {
         // goroutine and claim it, so this write is not reported a second time
         persist_conn_publish(&g_key, &p_conn.conn);
 
+        connection_info_t local_conn = p_conn.conn;
         u16 orig_dport = p_conn.conn.d_port;
         sort_connection_info(&p_conn.conn);
 
@@ -233,7 +234,7 @@ int GUARDED_PROG(obi_uprobe_netFdWrite, struct pt_regs *, ctx) {
             cleanup_duplicate_generic_events_sorted(&p_conn);
 
             if (!http_large_buffer_skip(len)) {
-                send_http_large_buffers_if_needed(&g_key, &p_conn.conn, (void *)buf, len, TCP_SEND);
+                send_http_large_buffers_if_needed(&g_key, &local_conn, (void *)buf, len, TCP_SEND);
             }
             return 0;
         }
@@ -274,9 +275,9 @@ int GUARDED_PROG(obi_uprobe_netFdClose, struct pt_regs *, ctx) {
         return 0;
     }
 
-    sort_connection_info(&key.conn);
-
     bpf_map_delete_elem(&ongoing_large_buffers, &key);
+
+    sort_connection_info(&key.conn);
 
     dbg_print_http_connection_info(&key.conn);
 

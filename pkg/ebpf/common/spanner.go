@@ -104,7 +104,17 @@ func HTTPRequestTraceToSpan(parseCtx *EBPFParseContext, trace *HTTPRequestTrace)
 }
 
 func enrichedGoHTTPSpan(parseCtx *EBPFParseContext, conn BpfConnectionInfoT, span *request.Span) request.Span {
-	if req, requestBuffer, ok := parseGoRequestLargeBuffer(parseCtx, conn, span); ok {
+	return enrichedGoHTTPSpanWith(parseCtx, conn, span, nil)
+}
+
+// enrichedGoHTTPSpanWith enriches a span, preferring a request buffer the
+// caller already claimed. Deferred Go client requests must pass their own
+// buffer: by emit time the shared per-connection slot may belong to a later
+// request on that same connection.
+func enrichedGoHTTPSpanWith(parseCtx *EBPFParseContext, conn BpfConnectionInfoT, span *request.Span, claimed *largebuf.LargeBuffer) request.Span {
+	sortConnectionInfo(&conn)
+	if req, requestBuffer, ok := parseGoRequestLargeBufferWith(parseCtx, conn, span, claimed); ok {
+		span.RequestMessageBytes = completeHTTPMessageBytes(requestBuffer, nil)
 		resp := &http.Response{Header: http.Header{}}
 
 		hasResponse := false
@@ -114,6 +124,7 @@ func enrichedGoHTTPSpan(parseCtx *EBPFParseContext, conn BpfConnectionInfoT, spa
 			b, ok = extractTCPLargeBuffer(parseCtx, [16]byte{}, packetTypeResponse, directionByPacketType(packetTypeResponse, span.IsClientSpan()), conn, ProtocolTypeHTTP)
 		}
 		if ok {
+			span.ResponseMessageBytes = completeHTTPMessageBytes(b, req)
 			if looksLikeHTTP1Response(b) {
 				var err error
 				resp, err = httpSafeParseResponse(b, req)
@@ -133,6 +144,13 @@ func enrichedGoHTTPSpan(parseCtx *EBPFParseContext, conn BpfConnectionInfoT, spa
 		}
 
 		if !hasResponse || req == nil || resp == nil {
+			// The response buffer is missing (it can be dropped, or arrive
+			// after the request is emitted), but the REQUEST was parsed fine.
+			// Request-scoped enrichment only needs the request, so apply it
+			// rather than discarding headers we already have.
+			if req != nil && parseCtx != nil && parseCtx.httpEnricher != nil {
+				parseCtx.httpEnricher.EnrichRequestOnly(span, req)
+			}
 			return *span
 		}
 
@@ -151,14 +169,7 @@ func enrichedGoHTTPSpan(parseCtx *EBPFParseContext, conn BpfConnectionInfoT, spa
 
 func deferredGoHTTPClientRequestHandler(parseCtx *EBPFParseContext) func(pendingGoHTTPClientKey, *pendingGoHTTPClientRequest) {
 	return func(_ pendingGoHTTPClientKey, pending *pendingGoHTTPClientRequest) {
-		if pending == nil || !pending.emitted.CompareAndSwap(false, true) ||
-			parseCtx.discardPendingGoHTTPClients.Load() {
-			return
-		}
-
-		span := HTTPRequestTraceToSpan(parseCtx, &pending.trace)
-		span = enrichedGoHTTPSpan(parseCtx, pending.trace.Conn, &span)
-		parseCtx.emitExtraSpans(span)
+		parseCtx.emitPendingGoHTTPClientRequest(pending)
 	}
 }
 
@@ -167,10 +178,22 @@ func parseGoRequestLargeBuffer(
 	conn BpfConnectionInfoT,
 	span *request.Span,
 ) (*http.Request, *largebuf.LargeBuffer, bool) {
+	return parseGoRequestLargeBufferWith(parseCtx, conn, span, nil)
+}
+
+func parseGoRequestLargeBufferWith(
+	parseCtx *EBPFParseContext,
+	conn BpfConnectionInfoT,
+	span *request.Span,
+	claimed *largebuf.LargeBuffer,
+) (*http.Request, *largebuf.LargeBuffer, bool) {
 	sortConnectionInfo(&conn)
 
-	buffer, ok := extractTCPLargeBuffer(parseCtx, span.TraceID, packetTypeRequest,
-		directionByPacketType(packetTypeRequest, span.IsClientSpan()), conn, ProtocolTypeHTTP)
+	buffer, ok := claimed, claimed != nil
+	if !ok {
+		buffer, ok = extractTCPLargeBuffer(parseCtx, span.TraceID, packetTypeRequest,
+			directionByPacketType(packetTypeRequest, span.IsClientSpan()), conn, ProtocolTypeHTTP)
+	}
 	if !ok {
 		// try empty traceID which is normal for HTTP 1.1
 		buffer, ok = extractTCPLargeBuffer(parseCtx, [16]byte{}, packetTypeRequest,
@@ -223,7 +246,7 @@ func (ctx *EBPFParseContext) defersGoHTTPClientRequests() bool {
 }
 
 func (ctx *EBPFParseContext) deferGoHTTPClientRequest(trace *HTTPRequestTrace) bool {
-	if trace == nil || ctx.pendingGoHTTPClientRequests == nil ||
+	if trace == nil || (trace.Type != EventTypeHTTPClient && trace.Type != EventTypeGRPCClient) || ctx.pendingGoHTTPClientRequests == nil ||
 		ctx.discardPendingGoHTTPClients.Load() {
 		return false
 	}
@@ -231,6 +254,7 @@ func (ctx *EBPFParseContext) deferGoHTTPClientRequest(trace *HTTPRequestTrace) b
 	key := goHTTPClientConnectionKey(trace.Conn, trace.Tp.TraceId)
 	direction := directionByPacketType(packetTypeRequest, true)
 
+	deferrable := true
 	switch {
 	case containsTCPLargeBuffer(
 		ctx,
@@ -254,21 +278,54 @@ func (ctx *EBPFParseContext) deferGoHTTPClientRequest(trace *HTTPRequestTrace) b
 		key.traceID = [16]uint8{}
 
 	default:
-		return false
+		// No buffer for THIS request, so it cannot be deferred. It may still
+		// be the reuse of a connection whose previous request is pending, so
+		// fall through to flush that one before returning.
+		key.traceID = [16]uint8{}
+		deferrable = false
 	}
 
-	// This flushes a previous HTTP/1 request on connection reuse.
+	// Connection reuse: an earlier request on this connection is still
+	// pending under the same key (HTTP/1.1 keys are per-connection, since the
+	// trace ID is always zero). Emit that one NOW, with the buffer it already
+	// claimed, rather than dropping it — dropping lost the request entirely,
+	// which is how requests 1 and 3 of a 5-request keep-alive run disappeared.
 	// HTTP/2 requests have distinct trace IDs, so they remain independent.
-	if ctx.pendingGoHTTPClientRequests.Contains(key) {
+	if prev, ok := ctx.pendingGoHTTPClientRequests.Get(key); ok {
 		ctx.pendingGoHTTPClientRequests.Remove(key)
+		ctx.emitPendingGoHTTPClientRequest(prev)
+	}
+
+	if !deferrable {
 		return false
 	}
 
-	ctx.pendingGoHTTPClientRequests.Add(key, &pendingGoHTTPClientRequest{
+	pending := &pendingGoHTTPClientRequest{
 		trace:     *trace,
 		createdAt: time.Now(),
-	})
+	}
+
+	// Claim this request's own buffer before any later request on the same
+	// connection can overwrite the shared slot.
+	if buf, ok := extractTCPLargeBuffer(ctx, key.traceID, packetTypeRequest,
+		directionByPacketType(packetTypeRequest, true), key.conn, ProtocolTypeHTTP); ok {
+		pending.reqBuffer = buf
+	}
+
+	ctx.pendingGoHTTPClientRequests.Add(key, pending)
 	return true
+}
+
+// emitPendingGoHTTPClientRequest emits a deferred Go client request exactly
+// once, enriching it from the buffer that request claimed for itself.
+func (ctx *EBPFParseContext) emitPendingGoHTTPClientRequest(pending *pendingGoHTTPClientRequest) {
+	if pending == nil || !pending.emitted.CompareAndSwap(false, true) ||
+		ctx.discardPendingGoHTTPClients.Load() {
+		return
+	}
+	span := HTTPRequestTraceToSpan(ctx, &pending.trace)
+	span = enrichedGoHTTPSpanWith(ctx, pending.trace.Conn, &span, pending.reqBuffer)
+	ctx.emitExtraSpans(span)
 }
 
 func (ctx *EBPFParseContext) refreshPendingGoHTTPClientRequest(conn BpfConnectionInfoT, traceID [16]uint8) {

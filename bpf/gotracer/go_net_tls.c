@@ -41,6 +41,8 @@ static __always_inline void *unwrap_conn(void *conn) {
     return conn_conn;
 }
 
+#include <common/tls_h2_capture.h>
+
 SEC("uprobe/cryptoTlsRead")
 int GUARDED_PROG(obi_uprobe_cryptoTlsRead, struct pt_regs *, ctx) {
     void *goroutine_addr = GOROUTINE_PTR(ctx);
@@ -86,6 +88,10 @@ int GUARDED_PROG(obi_uprobe_cryptoTlsRead, struct pt_regs *, ctx) {
         const u64 id = bpf_get_current_pid_tgid();
         args.p_conn.pid = pid_from_pid_tgid(id);
         args.byte_ptr = (u64)buf;
+        if (tls_h2_enter(&g_key, conn, (void *)buf, 0, &args.p_conn.conn, TCP_RECV)) {
+            bpf_map_update_elem(&ongoing_ssl_ops, &g_key, &args, BPF_ANY);
+            return 0;
+        }
 
         dbg_print_http_connection_info(&args.p_conn.conn);
 
@@ -122,6 +128,10 @@ int GUARDED_PROG(obi_uprobe_cryptoTlsReadRet, struct pt_regs *, ctx) {
                    goroutine_addr,
                    len,
                    err);
+
+    if (tls_h2_return(&g_key, len)) {
+        goto done;
+    }
 
     if (len == 0 || err != 0) {
         goto done;
@@ -216,6 +226,10 @@ int GUARDED_PROG(obi_uprobe_cryptoTlsWrite, struct pt_regs *, ctx) {
         const u64 id = bpf_get_current_pid_tgid();
         args.p_conn.pid = pid_from_pid_tgid(id);
         args.byte_ptr = (u64)buf;
+        if (tls_h2_enter(&g_key, c, buf, len, &args.p_conn.conn, TCP_SEND)) {
+            bpf_map_update_elem(&ongoing_ssl_ops, &g_key, &args, BPF_ANY);
+            return 0;
+        }
 
         persist_conn_publish(&g_key, &args.p_conn.conn);
 
@@ -230,13 +244,14 @@ int GUARDED_PROG(obi_uprobe_cryptoTlsWrite, struct pt_regs *, ctx) {
         // skip this work. the return probes clean up
         bpf_map_update_elem(&ongoing_ssl_ops, &g_key, &args, BPF_ANY);
 
+        connection_info_t local_conn = args.p_conn.conn;
         u16 orig_dport = args.p_conn.conn.d_port;
         sort_connection_info(&args.p_conn.conn);
 
         if (already_handled_request_sorted(&args.p_conn.conn)) {
             cleanup_duplicate_generic_events_sorted(&args.p_conn);
             if (!http_large_buffer_skip(len)) {
-                send_http_large_buffers_if_needed(&g_key, &args.p_conn.conn, buf, len, TCP_SEND);
+                send_http_large_buffers_if_needed(&g_key, &local_conn, buf, len, TCP_SEND);
             }
             return 0;
         }
@@ -267,6 +282,15 @@ int GUARDED_PROG(obi_uprobe_cryptoTlsWriteRet, struct pt_regs *, ctx) {
 
     bpf_dbg_printk("=== uprobe/cryptoTlsWrite returns goroutine_addr=%lx", goroutine_addr);
 
+    tls_h2_return(&g_key, (s64)GO_PARAM1(ctx));
     bpf_map_delete_elem(&ongoing_ssl_ops, &g_key);
+    return 0;
+}
+
+SEC("uprobe/cryptoTlsClose")
+int GUARDED_PROG(obi_uprobe_cryptoTlsClose, struct pt_regs *, ctx) {
+    go_addr_key_t key = {};
+    go_addr_key_from_id(&key, GO_PARAM1(ctx));
+    tls_h2_close(&key);
     return 0;
 }

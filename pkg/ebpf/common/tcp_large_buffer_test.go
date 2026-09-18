@@ -142,3 +142,25 @@ func toRingbufRecord(t *testing.T, event TCPLargeBufferHeader, buf string) *ring
 		RawSample: fixedPart.Bytes(),
 	}
 }
+
+func TestOversizedBufferStaysDiscardedUntilNextMessage(t *testing.T) {
+	ctx := NewEBPFParseContext(nil, nil, nil)
+	ctx.maxHTTPBufferBytes = 8
+	event := TCPLargeBufferHeader{PacketType: packetTypeRequest, Direction: directionSend, Kind: uint8(KindLayerApp)}
+	appendChunk := func(action uint8, data string) {
+		event.Action, event.Len = action, uint32(len(data))
+		_, _, err := appendTCPLargeBuffer(ctx, toRingbufRecord(t, event, data))
+		require.NoError(t, err)
+	}
+	appendChunk(largeBufferActionInit, "12345678")
+	appendChunk(largeBufferActionAppend, "9")
+	appendChunk(largeBufferActionAppend, "tail")
+	_, ok := extractTCPLargeBuffer(ctx, event.Tp.TraceId, event.PacketType, event.Direction, event.ConnInfo, ProtocolTypeHTTP)
+	require.False(t, ok)
+	appendChunk(largeBufferActionAppend, "tail")
+	require.False(t, containsTCPLargeBuffer(ctx, event.Tp.TraceId, event.PacketType, event.Direction, event.ConnInfo, ProtocolTypeHTTP))
+	appendChunk(largeBufferActionInit, "new")
+	buffer, ok := extractTCPLargeBuffer(ctx, event.Tp.TraceId, event.PacketType, event.Direction, event.ConnInfo, ProtocolTypeHTTP)
+	require.True(t, ok)
+	require.Equal(t, "new", string(buffer.CloneBytes()))
+}

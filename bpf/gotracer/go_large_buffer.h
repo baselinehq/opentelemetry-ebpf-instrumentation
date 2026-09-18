@@ -84,9 +84,9 @@ static __always_inline u8 go_is_http(const unsigned char *buf, u32 len) {
     return k_http_not;
 }
 
-static __always_inline void
-cleanup_ongoing_large_buffer_sorted_conn(const connection_info_t *sorted_conn, u32 stream_id) {
-    go_large_buffer_key_t key = {.conn = *sorted_conn, .stream_id = stream_id};
+static __always_inline void cleanup_ongoing_large_buffer(const connection_info_t *conn,
+                                                         u32 stream_id) {
+    go_large_buffer_key_t key = {.conn = *conn, .stream_id = stream_id};
 
     bpf_map_delete_elem(&ongoing_large_buffers, &key);
 }
@@ -123,8 +123,9 @@ static __always_inline void ship_large_request(void *buf,
     sort_connection_info(&large_buf->conn_info);
 
     // We assume no streamID, e.g. HTTP1.1
-    go_large_buffer_key_t prev_key = {.conn = large_buf->conn_info, // sorted
-                                      .stream_id = 0};
+    // Role state belongs to the local endpoint. Sorting here would let the
+    // server inherit the client's role, even when both sockets share a process.
+    go_large_buffer_key_t prev_key = {.conn = *conn, .stream_id = 0};
 
     bool *is_http2_conn = bpf_map_lookup_elem(&go_http2_client_connections, &large_buf->conn_info);
 
@@ -146,11 +147,10 @@ static __always_inline void ship_large_request(void *buf,
     if (prev_event) {
         event_type = prev_event->event_type;
     } else {
-        // Not HTTP and no previous event means it's HTTP2. The metadata is not
-        // attached to our goroutine, since the writer is spawned by the actual
-        // request. So we lookup the goroutine parent. Again this only handles
-        // client HTTP2 for now, server would need more work.
-        if (is_http == k_http_not) {
+        // Only known HTTP2 connections may inherit a request's trace ID from
+        // the writer's parent. TLS handshake bytes on an unknown connection
+        // must not seed HTTP1 state with that trace ID.
+        if (is_http == k_http_not && is_http2_conn) {
             void *parent_go = (void *)find_parent_goroutine_in_chain(g_key);
 
             bpf_d_printk("parent_go %llx", parent_go);

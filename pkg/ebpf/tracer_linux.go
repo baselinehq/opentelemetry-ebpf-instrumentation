@@ -416,10 +416,12 @@ func (pt *ProcessTracer) NewExecutable(exe *link.Executable, ie *Instrumentable)
 	}
 
 	for _, p := range pt.Programs {
-		// Go style Uprobes
-		if err := i.goprobes(p); err != nil {
-			printVerifierErrorInfo(err)
-			return err
+		// A shared capture can offer native executables to the Go tracer.
+		if ie.Offsets != nil {
+			if err := i.goprobes(p); err != nil {
+				printVerifierErrorInfo(err)
+				return err
+			}
 		}
 
 		// Uprobes to be used for native module instrumentation points

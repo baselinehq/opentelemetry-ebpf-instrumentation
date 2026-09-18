@@ -360,6 +360,8 @@ func HTTPInfoEventToSpan(parseCtx *EBPFParseContext, event *BPFHTTPInfo) (reques
 	// http.ReadRequest requires a *bufio.Reader; that one allocation is unavoidable.
 	reqReader := requestBuffer.NewReader()
 	req, err := http.ReadRequest(bufio.NewReader(&reqReader))
+	reqBytes := completeHTTPMessageBytes(requestBuffer, nil)
+	respBytes := completeHTTPMessageBytes(responseBuffer, req)
 	resp, err2 := httpSafeParseResponse(responseBuffer, req)
 	if err != nil || err2 != nil {
 		slog.Debug("error while parsing http request or response, falling back to manual HTTP info parsing", "reqErr", err, "respErr", err2)
@@ -378,7 +380,9 @@ func HTTPInfoEventToSpan(parseCtx *EBPFParseContext, event *BPFHTTPInfo) (reques
 		recoverRequestBody(req, requestBuffer)
 	}
 
-	return httpRequestResponseToSpan(parseCtx, event, req, resp), false, nil
+	span := httpRequestResponseToSpan(parseCtx, event, req, resp)
+	span.RequestMessageBytes, span.ResponseMessageBytes = reqBytes, respBytes
+	return span, false, nil
 }
 
 func recoverRequestBody(req *http.Request, requestBuffer *largebuf.LargeBuffer) {

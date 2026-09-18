@@ -313,7 +313,9 @@ func goHTTPClientTestConnection() BpfConnectionInfoT {
 }
 
 func pendingGoHTTPClientTrace(conn BpfConnectionInfoT, id byte, path string) HTTPRequestTrace {
-	trace := makeHTTPRequestTrace("GET", path, 200, 0, 2, 5)
+	trace := HTTPRequestTrace{Status: 200, ResponseLength: 2, StartMonotimeNs: 5000000, EndMonotimeNs: 10000000}
+	copy(trace.Method[:], "GET")
+	copy(trace.Path[:], path)
 	trace.Type = EventTypeHTTPClient
 	trace.Conn = conn
 	trace.Tp.TraceId[15] = id
@@ -369,4 +371,47 @@ func appendGoHTTPClientBufferWithSource(
 	_, ignore, err := appendTCPLargeBuffer(parseCtx, toRingbufRecord(t, header, payload))
 	require.NoError(t, err)
 	assert.True(t, ignore)
+}
+
+func TestServerSpanCannotClaimClientPayload(t *testing.T) {
+	cfg := goHTTPClientTestConfig()
+	ctx, _ := newGoHTTPClientTestParseContext(t, cfg, 2)
+	conn := goHTTPClientTestConnection()
+	payload := "GET /client HTTP/1.1\r\nHost: example.com\r\nX-Costgraph-Team: client\r\n\r\n"
+	appendGoHTTPClientBuffer(t, ctx, conn, [16]uint8{}, packetTypeRequest, directionSend, payload)
+	server := pendingGoHTTPClientTrace(conn, 1, "/server")
+	server.Type = uint8(request.EventTypeHTTP)
+	require.False(t, ctx.deferGoHTTPClientRequest(&server))
+	client := pendingGoHTTPClientTrace(conn, 2, "/client")
+	require.True(t, ctx.deferGoHTTPClientRequest(&client))
+	pending, ok := ctx.pendingGoHTTPClientRequests.Get(goHTTPClientConnectionKey(conn, [16]uint8{}))
+	require.True(t, ok)
+	require.Equal(t, payload, string(pending.reqBuffer.UnsafeView()))
+}
+
+func TestConnectionReusePreservesResponseOwnership(t *testing.T) {
+	cfg := goHTTPClientTestConfig()
+	ctx, emitted := newGoHTTPClientTestParseContext(t, cfg, 2)
+	conn := goHTTPClientTestConnection()
+	req1 := "GET /first HTTP/1.1\r\nHost: example.com\r\n\r\n"
+	resp1 := "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"
+	req2 := "GET /second HTTP/1.1\r\nHost: example.com\r\n\r\n"
+	resp2 := "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello"
+	appendGoHTTPClientBuffer(t, ctx, conn, [16]uint8{}, packetTypeRequest, directionSend, req1)
+	first := pendingGoHTTPClientTrace(conn, 1, "/first")
+	require.True(t, ctx.deferGoHTTPClientRequest(&first))
+	appendGoHTTPClientBuffer(t, ctx, conn, [16]uint8{}, packetTypeResponse, directionRecv, resp1)
+	appendGoHTTPClientBuffer(t, ctx, conn, [16]uint8{}, packetTypeRequest, directionSend, req2)
+	appendGoHTTPClientBuffer(t, ctx, conn, [16]uint8{}, packetTypeResponse, directionRecv, resp2)
+	second := pendingGoHTTPClientTrace(conn, 2, "/second")
+	require.True(t, ctx.deferGoHTTPClientRequest(&second))
+	select {
+	case batch := <-emitted:
+		require.Len(t, batch, 1)
+		require.Equal(t, "/first", batch[0].Path)
+		require.EqualValues(t, len(req1), batch[0].RequestMessageBytes)
+		require.EqualValues(t, len(resp1), batch[0].ResponseMessageBytes)
+	case <-time.After(time.Second):
+		t.Fatal("previous exchange was not emitted")
+	}
 }

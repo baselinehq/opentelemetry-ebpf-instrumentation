@@ -117,6 +117,28 @@ func (e *HTTPEnricher) Enrich(
 	return true
 }
 
+// EnrichRequestOnly applies request-scoped header rules when no response
+// buffer is available. Request-scoped rules do not need the response body or
+// its headers, so a missing response should cost the RESPONSE headers only —
+// not the request's, which were already parsed.
+//
+// Status-conditioned rules still evaluate correctly: ruleApplies reads
+// span.Status, which the Go tracer fills from the kernel event rather than
+// from the response buffer.
+//
+// Returns true if any request headers were extracted.
+func (e *HTTPEnricher) EnrichRequestOnly(baseSpan *request.Span, req *http.Request) bool {
+	if req == nil {
+		return false
+	}
+	reqHeaders := e.processHeaders(req.Header, config.HTTPParsingScopeRequest, baseSpan)
+	if len(reqHeaders) == 0 {
+		return false
+	}
+	baseSpan.RequestHeaders = reqHeaders
+	return true
+}
+
 // processHeaders evaluates header rules and returns a map of headers to
 // include or obfuscate. The map is allocated lazily.
 func (e *HTTPEnricher) processHeaders(

@@ -288,6 +288,17 @@ type pendingGoHTTPClientRequest struct {
 	trace     HTTPRequestTrace
 	createdAt time.Time
 	emitted   atomic.Bool
+
+	// reqBuffer is the request's OWN large buffer, claimed out of the shared
+	// largeBuffers store at defer time.
+	//
+	// HTTP/1.1 large buffers are keyed with an all-zero trace ID, so every
+	// request on a kept-alive connection addresses the SAME slot. Leaving the
+	// buffer in that slot until emit time means a later request on the same
+	// connection overwrites it, and the deferred span is then enriched from
+	// the wrong request's bytes. Claiming it here binds each deferred request
+	// to the payload it actually sent.
+	reqBuffer *largebuf.LargeBuffer
 }
 
 type pendingGoHTTPClientKey struct {
@@ -296,11 +307,13 @@ type pendingGoHTTPClientKey struct {
 }
 
 type EBPFParseContext struct {
+	tlsH2Captures               *lru.Cache[tlsH2Key, *tlsH2Capture]
 	protocolDebug               bool
 	h2c                         *lru.Cache[uint64, *h2Connection]
 	redisDBCache                *simplelru.LRU[BpfConnectionInfoT, int]
 	couchbaseBucketCache        *simplelru.LRU[BpfConnectionInfoT, CouchbaseBucketInfo]
 	largeBuffers                *expirable.LRU[largeBufferKey, *largebuf.LargeBuffer]
+	maxHTTPBufferBytes          int
 	mongoRequestCache           PendingMongoDBRequests
 	mysqlPreparedStatements     *simplelru.LRU[mysqlPreparedStatementsKey, string]
 	postgresPreparedStatements  *simplelru.LRU[postgresPreparedStatementsKey, string]
@@ -475,7 +488,9 @@ func NewEBPFParseContext(cfg *config.EBPFTracer, spansChan *msg.Queue[[]request.
 		httpEnricher = ebpfhttp.NewHTTPEnricher(payloadExtraction.HTTP.Enrichment)
 	}
 
+	tlsH2Captures, _ := lru.New[tlsH2Key, *tlsH2Capture](1024)
 	parseCtx := &EBPFParseContext{
+		tlsH2Captures:              tlsH2Captures,
 		protocolDebug:              protocolDebug,
 		h2c:                        h2c,
 		redisDBCache:               redisDBCache,
@@ -492,6 +507,9 @@ func NewEBPFParseContext(cfg *config.EBPFTracer, spansChan *msg.Queue[[]request.
 		httpEnricher:               httpEnricher,
 		dnsEvents:                  dnsEvents,
 		emitSpans:                  emitSpans,
+	}
+	if cfg != nil {
+		parseCtx.maxHTTPBufferBytes = int(cfg.BufferSizes.HTTP)
 	}
 
 	if parseCtx.goClientPayloadExtractionEnabled(cfg) {
@@ -595,6 +613,8 @@ func ReadBPFTraceAsSpan(parseCtx *EBPFParseContext, cfg *config.EBPFTracer, reco
 	eventType := record.RawSample[0]
 
 	switch eventType {
+	case tlsH2Event:
+		return readTLSH2Capture(parseCtx, record)
 	case EventTypeSQL:
 		span, ignore, err := ReadSQLRequestTraceAsSpan(record)
 		return finalizeParsedSpan(parseCtx, span, ignore, err)
@@ -647,6 +667,11 @@ func ReadBPFTraceAsSpan(parseCtx *EBPFParseContext, cfg *config.EBPFTracer, reco
 		return request.Span{}, true, err
 	}
 
+	if parseCtx != nil && parseCtx.tlsH2Captures != nil && (event.Type == EventTypeHTTPClient || event.Type == EventTypeGRPCClient) {
+		if _, ok := parseCtx.tlsH2Captures.Get(tlsH2ConnectionKey(event.Pid.HostPid, event.Conn)); ok {
+			return request.Span{}, true, nil
+		}
+	}
 	if parseCtx != nil && parseCtx.defersGoHTTPClientRequests() && parseCtx.deferGoHTTPClientRequest(event) {
 		return request.Span{}, true, nil
 	}

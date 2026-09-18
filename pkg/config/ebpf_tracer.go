@@ -43,6 +43,10 @@ type MapsConfig struct {
 
 // EBPFTracer configuration for eBPF programs
 type EBPFTracer struct {
+	// TLSHTTP2Capture captures complete client HTTP/2 TLS streams for message-byte accounting.
+	// It replaces native HTTP/2 client spans on captured connections and is disabled by default.
+	TLSHTTP2Capture bool `yaml:"tls_http2_capture" env:"OTEL_EBPF_TLS_HTTP2_CAPTURE"`
+
 	// Enables logging of eBPF program events
 	BpfDebug bool `yaml:"bpf_debug" env:"OTEL_EBPF_BPF_DEBUG" validate:"boolean"`
 

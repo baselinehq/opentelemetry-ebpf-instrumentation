@@ -1380,6 +1380,10 @@ type Span struct {
 	// ResponseHeaders stores extracted HTTP response headers based on enrichment rules.
 	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
 
+	// Full HTTP message/frame bytes; zero means not measured.
+	RequestMessageBytes int64 `json:"requestMessageBytes,omitempty"`
+	ResponseMessageBytes int64 `json:"responseMessageBytes,omitempty"`
+
 	// RequestBodyContent stores the extracted HTTP request body (JSON string, possibly with obfuscated fields).
 	RequestBodyContent string `json:"requestBodyContent,omitempty"`
 	// ResponseBodyContent stores the extracted HTTP response body (JSON string, possibly with obfuscated fields).
