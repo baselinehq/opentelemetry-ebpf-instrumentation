@@ -44,7 +44,7 @@ func TestCaptureMapSizes(t *testing.T) {
 					continue
 				}
 				trimmed := m.MaxEntries == 1 && (m.Type == ebpf.Hash || m.Type == ebpf.LRUHash)
-				capped := m.MaxEntries == captureLRUMapMaxEntries && m.Type == ebpf.LRUHash
+				capped := m.MaxEntries == captureLRUMapMaxEntries && m.Type == ebpf.LRUHash && m.Pinning != ebpf.PinByName
 				if !trimmed && !capped {
 					t.Fatalf("unexpected change to %s", name)
 				}
@@ -60,7 +60,7 @@ func TestCaptureMapSizes(t *testing.T) {
 					continue
 				}
 				want := original.Copy()
-				if want.Type == ebpf.LRUHash {
+				if want.Type == ebpf.LRUHash && want.Pinning != ebpf.PinByName {
 					want.MaxEntries = min(want.MaxEntries, captureLRUMapMaxEntries)
 				}
 				if !reflect.DeepEqual(want, spec.Maps[name]) {

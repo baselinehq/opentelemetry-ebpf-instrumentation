@@ -81,7 +81,7 @@ func limitCaptureMaps(spec *ebpf.CollectionSpec) {
 
 func capLRUMaps(spec *ebpf.CollectionSpec) {
 	for _, m := range spec.Maps {
-		if m.Type == ebpf.LRUHash && m.MaxEntries > captureLRUMapMaxEntries {
+		if m.Type == ebpf.LRUHash && m.Pinning != ebpf.PinByName && m.MaxEntries > captureLRUMapMaxEntries {
 			m.MaxEntries = captureLRUMapMaxEntries
 		}
 	}
