@@ -23,7 +23,15 @@ struct {
 
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
-    __type(key, go_addr_key_t); // key: pointer to the request goroutine
+    __type(key, go_addr_key_t); // key: serve goroutine decoding the HEADERS frame
+    __type(value, tp_info_t);
+    __uint(max_entries, MAX_CONCURRENT_REQUESTS);
+    __uint(pinning, OBI_PIN_INTERNAL);
+} http2_server_headers_tp SEC(".maps");
+
+struct {
+    __uint(type, BPF_MAP_TYPE_LRU_HASH);
+    __type(key, go_addr_key_t); // key: pointer to the stream's responseWriter
     __type(value, tp_info_t);
     __uint(max_entries, MAX_CONCURRENT_REQUESTS);
 } http2_server_requests_tp SEC(".maps");
@@ -58,10 +66,16 @@ struct {
     __uint(max_entries, MAX_CONCURRENT_REQUESTS);
 } http2_req_map SEC(".maps");
 
+typedef struct http2_header_observation {
+    u64 request_go;
+    u8 app_owned;
+    u8 _pad[7];
+} http2_header_observation_t;
+
 struct {
     __uint(type, BPF_MAP_TYPE_LRU_HASH);
     __type(key, go_addr_key_t); // key: goroutine serializing request headers
-    __type(value, u8);          // positive only after writeHeader observes traceparent
+    __type(value, http2_header_observation_t);
     __uint(max_entries, MAX_CONCURRENT_REQUESTS);
 } http2_header_observations SEC(".maps");
 
@@ -84,7 +98,7 @@ struct {
     __type(key, go_addr_key_t); // key: go routine doing framer write headers
     __type(
         value,
-        framer_func_invocation_t); // the goroutine of the round trip request, which is the key for our traceparent info
+        go_h2_framer_func_invocation_t); // the goroutine of the round trip request, which is the key for our traceparent info
     __uint(max_entries, MAX_CONCURRENT_REQUESTS);
 } framer_invocation_map SEC(".maps");
 

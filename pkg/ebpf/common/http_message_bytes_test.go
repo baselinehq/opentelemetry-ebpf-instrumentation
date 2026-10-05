@@ -1,9 +1,13 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package ebpfcommon
 
 import (
-	"go.opentelemetry.io/obi/pkg/internal/largebuf"
 	"net/http"
 	"testing"
+
+	"go.opentelemetry.io/obi/pkg/internal/largebuf"
 )
 
 func TestCompleteHTTPMessageBytes(t *testing.T) {
@@ -14,13 +18,13 @@ func TestCompleteHTTPMessageBytes(t *testing.T) {
 	}{
 		{"request", "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 3\r\n\r\nabc", nil, true},
 		{"truncated request", "POST / HTTP/1.1\r\nHost: example.com\r\nContent-Length: 3\r\n\r\na", nil, false},
-		{"response", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc", &http.Request{Method: "GET"}, true},
-		{"truncated response", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na", &http.Request{Method: "GET"}, false},
-		{"chunked", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n", &http.Request{Method: "GET"}, true},
-		{"truncated chunked", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n", &http.Request{Method: "GET"}, false},
-		{"head", "HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n", &http.Request{Method: "HEAD"}, true},
-		{"missing framing", "HTTP/1.1 200 OK\r\n\r\nabc", &http.Request{Method: "GET"}, false},
-		{"concatenated", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", &http.Request{Method: "GET"}, false},
+		{"response", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\nabc", &http.Request{Method: http.MethodGet}, true},
+		{"truncated response", "HTTP/1.1 200 OK\r\nContent-Length: 3\r\n\r\na", &http.Request{Method: http.MethodGet}, false},
+		{"chunked", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n0\r\n\r\n", &http.Request{Method: http.MethodGet}, true},
+		{"truncated chunked", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nabc\r\n", &http.Request{Method: http.MethodGet}, false},
+		{"head", "HTTP/1.1 200 OK\r\nContent-Length: 999\r\n\r\n", &http.Request{Method: http.MethodHead}, true},
+		{"missing framing", "HTTP/1.1 200 OK\r\n\r\nabc", &http.Request{Method: http.MethodGet}, false},
+		{"concatenated", "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n", &http.Request{Method: http.MethodGet}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			buf := largebuf.NewLargeBuffer()

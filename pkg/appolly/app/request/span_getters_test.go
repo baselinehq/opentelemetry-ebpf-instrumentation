@@ -520,9 +520,12 @@ func TestSpanOTELGetters_HTTPRequestMethod(t *testing.T) {
 		assert.Equal(t, "GET", kv.Value.AsString())
 	})
 
-	t.Run("omitted when method is empty", func(t *testing.T) {
+	// Semconv: a method the instrumentation does not know MUST be reported as
+	// _OTHER, and one the parser could not read is not known.
+	t.Run("clamped when method is empty", func(t *testing.T) {
 		kv := getter(&Span{Method: ""})
-		assert.False(t, kv.Valid(), "empty method must yield an invalid KeyValue so it is dropped")
+		require.True(t, kv.Valid())
+		assert.Equal(t, HTTPMethodOther, kv.Value.AsString())
 	})
 
 	// http.request.method is a closed enum, so an unclamped metric label is a
@@ -604,6 +607,24 @@ func TestSpanOTELGetters_JSONRPCAttributes(t *testing.T) {
 		// the attribute is dropped instead of being emitted empty.
 		omitted bool
 	}{
+		{
+			name:     "rpc.method - qualified from the Go net/rpc service name",
+			attrName: attr.RPCMethod,
+			span: &Span{
+				SubType: HTTPSubtypeJSONRPC,
+				JSONRPC: &JSONRPC{Method: "Arith.Traceme", Version: JSONRPCVersionV1, ServiceQualified: true},
+			},
+			expected: "Arith/Traceme",
+		},
+		{
+			name:     "rpc.method - a payload-extracted dotted method is left whole",
+			attrName: attr.RPCMethod,
+			span: &Span{
+				SubType: HTTPSubtypeJSONRPC,
+				JSONRPC: &JSONRPC{Method: "inventory.lookup.v2", Version: "2.0"},
+			},
+			expected: "inventory.lookup.v2",
+		},
 		{
 			name:     "protocol version - JSON-RPC span",
 			attrName: attr.JSONRPCProtocolVersion,
@@ -1026,10 +1047,78 @@ func TestSpanOTELGetters_ErrorTypeOmitted(t *testing.T) {
 	assert.Equal(t, "SERVER_ERROR", kv.Value.AsString())
 }
 
-// TestSpanOTELGetters_GenAIOperationNameOmitted ensures gen_ai.operation.name
-// is omitted — not emitted as an empty string — when the operation could not
-// be derived, while classified operations keep it.
-func TestSpanOTELGetters_GenAIOperationNameOmitted(t *testing.T) {
+func TestSpanGetters_ErrorTypeOnHTTPSpans(t *testing.T) {
+	otelGetter, ok := spanOTELGetters(attr.ErrorType)
+	require.True(t, ok)
+	promGetter := spanPromGetters(attr.ErrorType)
+	require.NotNil(t, promGetter)
+
+	for _, tc := range []struct {
+		name     string
+		span     *Span
+		expected string
+	}{
+		{name: "server 200", span: &Span{Type: EventTypeHTTP, Status: 200}, expected: ""},
+		{name: "server 404", span: &Span{Type: EventTypeHTTP, Status: 404}, expected: ""},
+		{name: "server 500", span: &Span{Type: EventTypeHTTP, Status: 500}, expected: "500"},
+		{name: "server 503", span: &Span{Type: EventTypeHTTP, Status: 503}, expected: "503"},
+		{name: "server no response", span: &Span{Type: EventTypeHTTP, Status: 500, ResponseObservation: ResponseSilent}, expected: ""},
+		{name: "client 200", span: &Span{Type: EventTypeHTTPClient, Status: 200}, expected: ""},
+		{name: "client 404", span: &Span{Type: EventTypeHTTPClient, Status: 404}, expected: "404"},
+		{name: "client 500", span: &Span{Type: EventTypeHTTPClient, Status: 500}, expected: "500"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := otelGetter(tc.span)
+			if tc.expected == "" {
+				assert.False(t, kv.Valid(), "attribute should be omitted, got %v", kv)
+			} else {
+				require.True(t, kv.Valid())
+				assert.Equal(t, string(attr.ErrorType), string(kv.Key))
+				assert.Equal(t, tc.expected, kv.Value.AsString())
+			}
+			assert.Equal(t, tc.expected, promGetter(tc.span))
+		})
+	}
+}
+
+func TestSpanGettersForHTTP_ErrorTypeIgnoresProtocolCodes(t *testing.T) {
+	otelGetter, ok := SpanOTELGettersForHTTP(UnresolvedNames{})(attr.ErrorType)
+	require.True(t, ok)
+	promGetter, ok := SpanPromGettersForHTTP(UnresolvedNames{})(attr.ErrorType)
+	require.True(t, ok)
+
+	for _, tc := range []struct {
+		name     string
+		span     *Span
+		expected string
+	}{
+		{name: "json-rpc error in 200", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeJSONRPC, Status: 200, JSONRPC: &JSONRPC{ErrorCode: -32601}}, expected: ""},
+		{name: "mcp error in 200", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeMCP, Status: 200, GenAI: &GenAI{MCP: &MCPCall{ErrorCode: -32602}}}, expected: ""},
+		{name: "sns batch failure in 200", span: &Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeAWSSNS, Status: 200, AWS: &AWS{SNS: AWSSNS{ErrorCode: "InvalidParameter"}}}, expected: ""},
+		{name: "json-rpc error in 500", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeJSONRPC, Status: 500, JSONRPC: &JSONRPC{ErrorCode: -32603}}, expected: "500"},
+		{name: "server 404", span: &Span{Type: EventTypeHTTP, Status: 404}, expected: ""},
+		{name: "client 404", span: &Span{Type: EventTypeHTTPClient, Status: 404}, expected: "404"},
+		{name: "server no response", span: &Span{Type: EventTypeHTTP, Status: 500, ResponseObservation: ResponseSilent}, expected: ""},
+		{name: "no status", span: &Span{Type: EventTypeHTTPClient}, expected: ErrorTypeOther},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			kv := otelGetter(tc.span)
+			if tc.expected == "" {
+				assert.False(t, kv.Valid(), "attribute should be omitted, got %v", kv)
+			} else {
+				require.True(t, kv.Valid())
+				assert.Equal(t, tc.expected, kv.Value.AsString())
+			}
+			assert.Equal(t, tc.expected, promGetter(tc.span))
+		})
+	}
+}
+
+// TestSpanOTELGetters_GenAIOperationNameClamped ensures gen_ai.operation.name
+// clamps to _OTHER — not an empty string — on a GenAI span whose operation
+// could not be derived, stays absent on spans that carry no GenAI data, and
+// keeps classified operations.
+func TestSpanOTELGetters_GenAIOperationNameClamped(t *testing.T) {
 	getter, ok := spanOTELGetters(attr.GenAIOperationName)
 	require.True(t, ok, "getter should be found for GenAIOperationName")
 
@@ -1043,7 +1132,8 @@ func TestSpanOTELGetters_GenAIOperationNameOmitted(t *testing.T) {
 		SubType: HTTPSubtypeOpenAI,
 		GenAI:   &GenAI{OpenAI: &VendorOpenAI{}},
 	})
-	assert.False(t, kv.Valid(), "attribute should be omitted, got %v", kv)
+	require.True(t, kv.Valid())
+	assert.Equal(t, OtherOperationName, kv.Value.AsString())
 
 	// classified GenAI span keeps its operation name
 	kv = getter(&Span{
@@ -1510,6 +1600,13 @@ func TestSpanOTELGetters_DBNamespace(t *testing.T) {
 	assert.Equal(t, string(attr.DBNamespace), string(kv.Key))
 	assert.Equal(t, "1", kv.Value.AsString())
 
+	kv = getter(&Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeElasticsearch, DBNamespace: "cluster-a", Elasticsearch: &Elasticsearch{DBSystemName: "elasticsearch"}})
+	require.True(t, kv.Valid())
+	assert.Equal(t, "cluster-a", kv.Value.AsString())
+
+	kv = getter(&Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeElasticsearch, Elasticsearch: &Elasticsearch{DBSystemName: "elasticsearch"}})
+	assert.False(t, kv.Valid(), "expected db.namespace to be omitted, got %v", kv)
+
 	// spans without an available namespace must omit the attribute
 	// instead of emitting an empty value
 	kv = getter(&Span{Type: EventTypeSQLClient, SubType: int(DBMySQL)})
@@ -1576,4 +1673,25 @@ func TestSpanOTELGetters_DBResponseStatusCode(t *testing.T) {
 			assert.Equal(t, tt.expected, kv.Value.AsString())
 		})
 	}
+}
+
+func TestSpanOTELGetters_MessagingConsumerGroup(t *testing.T) {
+	getter, ok := spanOTELGetters(attr.MessagingConsumerGroup)
+	require.True(t, ok, "getter should be found for MessagingConsumerGroup")
+
+	consumer := &Span{Type: EventTypeKafkaClient, Method: MessagingProcess, MessagingInfo: &MessagingInfo{ConsumerGroup: "my-group"}}
+	kv := getter(consumer)
+	require.True(t, kv.Valid())
+	assert.Equal(t, string(attr.MessagingConsumerGroup), string(kv.Key))
+	assert.Equal(t, "my-group", kv.Value.AsString())
+
+	// unknown group and producers: attribute omitted, Prometheus label empty
+	for _, span := range []*Span{
+		{Type: EventTypeKafkaClient, Method: MessagingProcess, MessagingInfo: &MessagingInfo{}},
+		{Type: EventTypeKafkaClient, Method: MessagingSend},
+	} {
+		assert.False(t, getter(span).Valid())
+		assert.Empty(t, spanPromGetters(attr.MessagingConsumerGroup)(span))
+	}
+	assert.Equal(t, "my-group", spanPromGetters(attr.MessagingConsumerGroup)(consumer))
 }

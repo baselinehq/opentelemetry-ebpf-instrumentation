@@ -6,7 +6,7 @@ through language-specific library instrumentation documented later in this file.
 | Protocol      | Languages |    Versions | Methods                                                                                  | Secure | Propagates Context |                                                                                                                     Limitations
 |:--------------|:---------:|------------:|------------------------------------------------------------------------------------------|:------:|-------------------:|--------------------------------------------------------------------------------------------------------------------------------:
 | HTTP          |    All    |     1.0/1.1 | All                                                                                      |  Yes   |                Yes | Generic TLS inject uses TCP option kind 25 only (OBI-to-OBI; L7 proxies drop it). Header inject works for plaintext.
-| HTTP          |    All    |         2.0 | All                                                                                      |  Yes   |                Yes | Network-level HPACK inject/extract on plaintext HTTP/2. Generic TLS cannot inject (`sk_msg` sees ciphertext); extract still works if a peer injected. Huffman-encoded `traceparent` extract requires kernel 5.17+. Go library instrumentation covers TLS inject via uprobes. See [grpc-context-propagation.md](grpc-context-propagation.md).
+| HTTP          |    All    |         2.0 | All                                                                                      |  Yes   |                Yes | Network-level HPACK inject/extract on plaintext HTTP/2. Generic TLS cannot inject (`sk_msg` sees ciphertext); extract still works if a peer injected. Huffman-encoded `traceparent` extract requires kernel 5.17+. Go library instrumentation covers TLS inject via uprobes. On the generic path, about six streams that share one read or write are captured; extra streams are dropped instead of being reported with wrong values. See [grpc-context-propagation.md](grpc-context-propagation.md).
 | gRPC          |    All    |        1.0+ | All                                                                                      |  Yes   |                Yes | Same HPACK path as HTTP/2. Can't get method for long living connections before OBI started, will mark method with `*`. Generic TLS cannot inject. Huffman extract requires kernel 5.17+. Message body capture is not supported (needs a `.proto` OBI does not have).
 | MySQL         |    All    |         All | All                                                                                      |  Yes   |                 No |             In the case of prepared statements, if the statement was prepared before OBI started then the query might be missed
 | PostgreSQL    |    All    |         All | All                                                                                      |  Yes   |                 No |             In the case of prepared statements, if the statement was prepared before OBI started then the query might be missed
@@ -16,7 +16,7 @@ through language-specific library instrumentation documented later in this file.
 | Couchbase     |    All    |         All | All                                                                                      |  Yes   |                 No | Bucket unknown if SELECT_BUCKET occurred before OBI started; Collection unknown if GET_COLLECTION_ID occurred before OBI started
 | Memcached     |    All    |         All | ASCII text subset (excludes quit and meta commands)                                      |  Yes   |                 No |                     Only the first key is recorded for multi-key retrieval commands; payload bytes are not captured
 | Aerospike     |    All    |         All | GET, EXISTS, PUT, TOUCH, OPERATE, DELETE, SCAN, QUERY, BATCH, UDF                         |   No   |                 No |     Native client protocol (port 3000); compressed (type-4) payloads not parsed; only operation metadata captured, not record/bin values; `db.query.text` requires the client's `sendKey` write policy (otherwise only the key digest is on the wire)
-| Kafka         |    All    |         All | produce, fetch                                                                           |  Yes   |                 No |                     Might fail getting topic name for fetch requests in newer versions of kafka (where Fetch api version >= 13)
+| Kafka         |    All    |         All | produce, fetch                                                                           |  Yes   |                 No |                     Might fail getting topic name for fetch requests in newer versions of kafka (where Fetch api version >= 13). `messaging.consumer.group.name` on consumer (`process`) spans and metrics is learned from the membership requests (JoinGroup, SyncGroup, Heartbeat, KIP-848 ConsumerGroupHeartbeat) of the same process, per member (a process may run several consumers of one group, e.g. Kafka Streams threads), and each member is forgotten on its LeaveGroup or `ebpf.kafka_consumer_group_ttl` (2m) after its last one; OffsetCommit/OffsetFetch only add topics to a member already known, since the admin client sends them for any group, so consumers that `assign()` partitions and commit under a `group.id` without joining get no group, while an `assign()` consumer sharing its process with a subscribed one (Kafka Streams restore and global consumers) inherits that group. Kafka Connect and Schema Registry coordination groups (`protocol_type` other than `consumer`) are ignored once their JoinGroup or SyncGroup is seen. Fetches in the first `ebpf.kafka_consumer_group_ttl` after OBI first sees a membership request from a process, and again after a ttl without any, carry no group, so that a process with several groups is not labelled with the one that heartbeated first (a process whose consumer runs are shorter than the ttl therefore never gets the attribute); a consumer that heartbeats less often than that ttl, or a classic consumer whose rebalance outlasts it, can be reported with another group of its process; a process consuming the same topic in two groups gets no group for that topic; broker-side (server) spans never carry it. The attribute is a default label of `messaging_process_duration`: clients that mint a group id per run (e.g. `console-consumer-<n>`) create one time series each; exclude it with `attributes.select` if that matters.
 | MQTT          |    All    |   3.1.1/5.0 | publish, subscribe                                                                       |   No   |                 No |                                                            For subscribe, only first topic filter is used; payload not captured
 | NATS          |    All    |         All | publish, process                                                                         |   No   |                 No |                                  Only `PUB`/`HPUB` and delivered `MSG`/`HMSG` frames are traced; control traffic is ignored; TLS is not parsed
 | AMQP          |    All    |       1.0   | publish, process                                                                         |   No   |                 No |                  Userspace heuristic only; transfer frames are traced while handshake and flow-control performatives are ignored
@@ -102,8 +102,8 @@ To turn this off and fallback to the normal network based instrumentation for Go
 | github.com/go-sql-driver/mysql |   MySQL    |             >= v1.5.0 | All     |  Yes   |                 No |         N/A
 | github.com/lib/pq              | PostgreSQL |                   All | All     |  Yes   |                 No |         N/A
 | github.com/redis/go-redis/v9   |   Redis    |             >= v9.0.0 | All     |  Yes   |                 No |         N/A
-| github.com/segmentio/kafka-go  |   Kafka    |            >= v0.4.11 | All     |  Yes   |                 No |         N/A
-| github.com/IBM/sarama          |   Kafka    |               >= 1.37 | All     |  Yes   |                 No |         N/A
+| github.com/segmentio/kafka-go  |   Kafka    |            >= v0.4.11 | All     |  Yes   |                 No | `messaging.consumer.group.name` not reported (group requests are not captured by the Go uprobes)
+| github.com/IBM/sarama          |   Kafka    |               >= 1.37 | All     |  Yes   |                 No | `messaging.consumer.group.name` not reported (group requests are not captured by the Go uprobes)
 | go.mongodb.org/mongo-driver    |  MongoDB   | >= v1.10.1, >= v2.0.1 | All     |  Yes   |                 No |         N/A
 
 ### Go Channel Span Links
@@ -151,10 +151,12 @@ Equivalent YAML keys live under `ebpf.buffer_sizes.{http,mysql,kafka,postgres,ms
 ## Node.js Manual Spans
 
 Since OBI v0.12.1, OBI can capture spans that a Node.js application creates through `@opentelemetry/api` when no
-OpenTelemetry SDK is registered. Opt-in: `nodejs.manual_spans: true` or `OTEL_EBPF_NODEJS_MANUAL_SPANS=true`. The
+OpenTelemetry SDK is registered. Opt-in: `nodejs.manual_spans: true` or `OTEL_EBPF_NODEJS_MANUAL_SPANS=true`.
+Needs Node.js 14.0 or newer: the span bridge uses nullish coalescing, and it is evaluated together with the
+rest of the agent, so an older runtime rejects the whole payload and the injection is refused. The
 Node.js inspector must be reachable, and OBI must be able to open it: it withholds `SIGUSR1` unless the process is
-provably a Node.js runtime that the signal cannot terminate and that registers no handler of its own (see
-[runtimes/nodejs.md](runtimes/nodejs.md) for the full list of refusal reasons). If the application registers an SDK,
+provably a Node.js runtime, recent enough to run the agent, that the signal cannot terminate and that registers no
+handler of its own (see [runtimes/nodejs.md](runtimes/nodejs.md) for the full list of refusal reasons). If the application registers an SDK,
 OBI leaves span creation to that SDK.
 
 See [nodejs-manual-spans.md](nodejs-manual-spans.md).
@@ -164,9 +166,19 @@ See [nodejs-manual-spans.md](nodejs-manual-spans.md).
 Specifically for instrumenting GPU execution primitives, like NVIDIA CUDA kernel launches and memory copies. This
 instrumentation support differs from traditional GPU metrics, such as GPU utilization and GPU temperature.
 
-| Library                        |  Primitives                                                                      |             Versions | Limitations
-|:-------------------------------|:--------------------------------------------------------------------------------:|---------------------:|------------:
-| libcuda                        |    cudaLaunchKernel, cudaGraphLaunch, cudaMalloc, cudaMemcpy, cudaMemcpyAsync    |               >= 7.0 |         N/A
+OBI instruments the CUDA Runtime API through `libcudart` and the CUDA Driver API through `libcuda`. Since the runtime
+implements the driver API, launches in a process that maps both libraries would be observed twice; OBI deduplicates
+them in the eBPF programs by suppressing the driver API call that a runtime API call on the same thread is still
+executing.
+
+| Library   | Primitives | Versions | Limitations
+|:----------|:-----------|---------:|------------:
+| libcudart | cudaLaunchKernel, cudaGraphLaunch, cudaMalloc, cudaFree, cudaMemset, cudaMemcpy, cudaMemcpyAsync, cudaStreamCreate, cudaStreamCreateWithFlags, cudaStreamCreateWithPriority, cudaStreamDestroy, cudaEventRecord, cudaEventRecordWithFlags, cudaEventSynchronize, cudaStreamSynchronize, cudaDeviceSynchronize, cudaHostRegister, cudaSetDevice, cudaGetDevice, cudaGetDeviceProperties, cudaGetDeviceProperties_v2 | >= 7.0 | N/A
+| libcuda   | cuLaunchKernel, cuLaunchKernelEx, cuGraphLaunch, cuDeviceGetUuid, cuDeviceGetUuid_v2, cuDeviceGetName | >= 7.0 | N/A
+
+Enablement is controlled by `ebpf.instrument_cuda` (`OTEL_EBPF_INSTRUMENT_CUDA`); the default `auto` enables the
+instrumentation when `nvidia-smi` is on the `PATH` of the OBI process. Spans and metrics are labelled with the device
+index, UUID, and model. See [gpu-monitoring.md](gpu-monitoring.md) for the emitted metrics and the full design.
 
 # Supported Context propagation frameworks
 
@@ -180,8 +192,8 @@ OBI has support for several asynchronous frameworks that allow it to propagate c
 |:--------------------|:---------:|-----------------:|:--------------------------------------------------|:-------------
 | Go Routines         |    Go     |       Go >= 1.18 | up to 6 nested levels of goroutines               | Stable
 | Go channel span links |  Go     |       Go >= 1.17 | `select` paths are not supported                  | Experimental
-| Node.js Async Hooks |  Node.js  |   Node.js >= 8.0 | Custom handling of SIGUSR1 signal might interfere | Stable
+| Node.js Async Hooks |  Node.js  | Node.js >= 12.17, excluding 13.0-13.9 | The injected agent needs `AsyncLocalStorage`; custom handling of SIGUSR1 might interfere | Stable
 | Ruby Puma Server    |   Ruby    |              N/A | Only works with Puma server                       | Stable
-| Java Thread pool    |   Java    |           JDK 8+ | Parent lookup walks up to 3 thread-nesting levels | Stable
-| Java Virtual Threads |  Java    |          JDK 21+ | Log enrichment is skipped on virtual threads      | Stable
+| Java Thread pool    |   Java    |           JDK 8+ | Parent lookup walks up to 3 thread-nesting levels; `-Xrs` or `-XX:+DisableAttachMechanism` prevents agent attachment | Stable
+| Java Virtual Threads |  Java    |          JDK 21+ | Log enrichment is skipped on virtual threads; `-Xrs` or `-XX:+DisableAttachMechanism` prevents agent attachment | Stable
 | Python asyncio      |  Python   | GIL-enabled, 64-bit CPython 3.9 through 3.14 | Free-threaded builds are unsupported; `asyncio.start_server()` is not correlated under uvloop; mutated contexts and cancelled `to_thread` tasks may lose correlation | Stable

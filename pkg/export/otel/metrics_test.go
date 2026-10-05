@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -30,7 +32,6 @@ import (
 	"go.opentelemetry.io/obi/pkg/appolly/app/request"
 	"go.opentelemetry.io/obi/pkg/appolly/app/svc"
 	"go.opentelemetry.io/obi/pkg/appolly/discover/exec"
-	"go.opentelemetry.io/obi/pkg/appolly/meta"
 	"go.opentelemetry.io/obi/pkg/appolly/services"
 	"go.opentelemetry.io/obi/pkg/export"
 	"go.opentelemetry.io/obi/pkg/export/attributes"
@@ -40,6 +41,7 @@ import (
 	otelmetric "go.opentelemetry.io/obi/pkg/export/otel/metric"
 	"go.opentelemetry.io/obi/pkg/export/otel/otelcfg"
 	"go.opentelemetry.io/obi/pkg/export/otel/perapp"
+	"go.opentelemetry.io/obi/pkg/metadata"
 	"go.opentelemetry.io/obi/pkg/pipe/global"
 	"go.opentelemetry.io/obi/pkg/pipe/msg"
 )
@@ -788,6 +790,68 @@ func TestAppMetrics_MCPOperationDuration(t *testing.T) {
 	}
 }
 
+func TestAppMetrics_MCPSessionDurationExportsDuringShutdown(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+
+	metricRecords := make(chan collector.MetricRecord, 100)
+	metricsInput := msg.NewQueue[[]request.Span](msg.ChannelBufferLen(1))
+	processEvents := msg.NewQueue[exec.ProcessEvent](msg.ChannelBufferLen(1))
+	mcfg := &otelcfg.MetricsConfig{
+		Interval:          10 * time.Millisecond,
+		TTL:               time.Hour,
+		ReportersCacheLen: 1,
+		Instrumentations:  []instrumentations.Instrumentation{instrumentations.InstrumentationGenAI},
+		MetricsConsumer:   testMetricsConsumer(metricRecords),
+	}
+	reporter, err := newMetricsReporter(
+		ctx,
+		&global.ContextInfo{OTELMetricsExporter: &otelcfg.MetricsExporterInstancer{Cfg: mcfg}},
+		mcfg,
+		&perapp.GlobalMetricsConfig{Features: export.FeatureApplicationRED},
+		&attributes.SelectorConfig{},
+		request.UnresolvedNames{},
+		metricsInput,
+		processEvents,
+	)
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		reporter.reportMetrics(ctx)
+		close(done)
+	}()
+
+	metricsInput.Send([]request.Span{{
+		Service:      svc.Attrs{Features: export.FeatureApplicationRED, UID: svc.UID{Instance: "mcp"}},
+		Type:         request.EventTypeHTTPClient,
+		SubType:      request.HTTPSubtypeMCP,
+		RequestStart: 100,
+		End:          200,
+		GenAI: &request.GenAI{MCP: &request.MCPCall{
+			SessionID: "session-1",
+		}},
+	}})
+
+	// The per-operation metric is exported periodically, so seeing it proves the span
+	// was processed before the context is canceled.
+	readMetricsByName(t, metricRecords, 5*time.Second, attributes.MCPClientOperationDuration.OTEL)
+
+	// Canceling the reporter context is the normal process-shutdown path: ctx.Done()
+	// exits reportMetrics, so the final collection/export runs with mr.ctx canceled.
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		require.FailNow(t, "reportMetrics did not finish")
+	}
+
+	records := readMetricsByName(t, metricRecords, time.Second, attributes.MCPClientSessionDuration.OTEL)
+	require.Len(t, records, 1)
+	assert.Equal(t, 1, records[0].Count)
+}
+
 func TestAppMetrics_DBClientAttributes(t *testing.T) {
 	ctx := t.Context()
 	metricRecords := make(chan collector.MetricRecord, 10)
@@ -839,6 +903,74 @@ func TestAppMetrics_DBClientAttributes(t *testing.T) {
 	// the DBMS default port is still reported because the user explicitly
 	// included server.port in the selection
 	assert.Equal(t, "5432", records[0].Attributes[string(attr.ServerPort)])
+}
+
+func TestAppMetrics_HTTPErrorType(t *testing.T) {
+	features := export.FeatureApplicationRED | export.FeatureApplicationSizes
+	ctx := t.Context()
+	metricRecords := make(chan collector.MetricRecord, 20)
+	metrics := msg.NewQueue[[]request.Span](msg.ChannelBufferLen(10))
+	processEvents := msg.NewQueue[exec.ProcessEvent](msg.ChannelBufferLen(10))
+	mcfg := &otelcfg.MetricsConfig{
+		Interval:          50 * time.Millisecond,
+		TTL:               30 * time.Minute,
+		ReportersCacheLen: 10,
+		Instrumentations:  []instrumentations.Instrumentation{instrumentations.InstrumentationHTTP},
+		MetricsConsumer:   testMetricsConsumer(metricRecords),
+	}
+
+	reporter, err := newMetricsReporter(
+		ctx,
+		&global.ContextInfo{OTELMetricsExporter: &otelcfg.MetricsExporterInstancer{Cfg: mcfg}},
+		mcfg,
+		&perapp.GlobalMetricsConfig{Features: features},
+		&attributes.SelectorConfig{},
+		request.UnresolvedNames{},
+		metrics,
+		processEvents,
+	)
+	require.NoError(t, err)
+	go reporter.reportMetrics(ctx)
+
+	svcAttrs := svc.Attrs{Features: features, UID: svc.UID{Instance: "foo"}}
+	metrics.Send([]request.Span{
+		{Service: svcAttrs, Type: request.EventTypeHTTP, Method: "GET", Status: 500, RequestStart: 100, End: 200},
+		{Service: svcAttrs, Type: request.EventTypeHTTP, SubType: request.HTTPSubtypeJSONRPC, Method: "POST", Status: 200, RequestStart: 100, End: 200, JSONRPC: &request.JSONRPC{Method: "missing", Version: "2.0", ErrorCode: -32601}},
+		{Service: svcAttrs, Type: request.EventTypeHTTPClient, Method: "GET", Status: 200, RequestStart: 100, End: 200},
+		{Service: svcAttrs, Type: request.EventTypeHTTPClient, Method: "GET", Status: 404, RequestStart: 100, End: 200},
+	})
+
+	serverMetrics := []string{attributes.HTTPServerDuration.OTEL, attributes.HTTPServerRequestSize.OTEL, attributes.HTTPServerResponseSize.OTEL}
+	clientMetrics := []string{attributes.HTTPClientDuration.OTEL, attributes.HTTPClientRequestSize.OTEL, attributes.HTTPClientResponseSize.OTEL}
+	pending := map[string]string{}
+	for _, name := range serverMetrics {
+		pending[name+"/500"] = "500"
+		pending[name+"/200"] = ""
+	}
+	for _, name := range clientMetrics {
+		pending[name+"/404"] = "404"
+		pending[name+"/200"] = ""
+	}
+
+	deadline := time.After(timeout)
+	for len(pending) > 0 {
+		select {
+		case record := <-metricRecords:
+			key := record.Name + "/" + record.Attributes[string(attr.HTTPResponseStatusCode)]
+			want, ok := pending[key]
+			if !ok {
+				continue
+			}
+			if want == "" {
+				assert.NotContains(t, record.Attributes, string(attr.ErrorType), key)
+			} else {
+				assert.Equal(t, want, record.Attributes[string(attr.ErrorType)], key)
+			}
+			delete(pending, key)
+		case <-deadline:
+			require.Failf(t, "timeout while waiting for metric records", "missing: %v", pending)
+		}
+	}
 }
 
 func TestAppMetrics_DBClientServerPortDefaultSelection(t *testing.T) {
@@ -987,30 +1119,135 @@ func TestSpanMetrics_ExtraResourceAttributes(t *testing.T) {
 	assert.Empty(t, expected)
 }
 
+// Span metrics are the highest-cardinality family OBI emits, so the base attribute set that
+// spanMetricAttributes builds is pinned here: one added multiplies every series, one removed
+// silently breaks consumers grouping by it. (A user can still append to it through
+// ExtraSpanResourceLabels, which TestSpanMetrics_ExtraResourceAttributes covers; this test
+// constructs the reporter with an empty config so it sees the base set alone.)
+//
+// host.id is deliberately not among them, and the resource assertion below is the other half of
+// that: dropping it from the data points is only correct while the resource still carries it.
+func TestSpanMetrics_EmittedAttributes(t *testing.T) {
+	for _, tc := range []struct {
+		name             string
+		features         export.Features
+		wantDurationUnit string
+	}{
+		{name: "otel naming", features: export.FeatureSpanOTel, wantDurationUnit: "s"},
+		{name: "legacy naming", features: export.FeatureSpanLegacy, wantDurationUnit: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer otelcfg.RestoreEnvAfterExecution()()
+
+			ctx := t.Context()
+			metricRecords := make(chan collector.MetricRecord, 100)
+
+			now := syncedClock{now: time.Now()}
+			timeNow = now.Now
+
+			metrics := msg.NewQueue[[]request.Span](msg.ChannelBufferLen(20))
+			processEvents := msg.NewQueue[exec.ProcessEvent](msg.ChannelBufferLen(20))
+			mcfg := &otelcfg.MetricsConfig{
+				Interval:          50 * time.Millisecond,
+				MetricsProtocol:   otelcfg.ProtocolHTTPProtobuf,
+				TTL:               30 * time.Minute,
+				ReportersCacheLen: 100,
+				Instrumentations:  []instrumentations.Instrumentation{instrumentations.InstrumentationHTTP},
+				MetricsConsumer:   testMetricsConsumer(metricRecords),
+			}
+
+			reporter, err := newMetricsReporter(
+				ctx,
+				&global.ContextInfo{
+					OTELMetricsExporter: &otelcfg.MetricsExporterInstancer{Cfg: mcfg},
+					NodeMeta:            metadata.NodeMeta{HostID: "the-host"},
+				},
+				mcfg,
+				&perapp.GlobalMetricsConfig{Features: tc.features},
+				&attributes.SelectorConfig{},
+				request.UnresolvedNames{},
+				metrics,
+				processEvents,
+			)
+			require.NoError(t, err)
+
+			go reporter.reportMetrics(ctx)
+
+			metrics.Send([]request.Span{{
+				Service: svc.Attrs{
+					Features: tc.features,
+					UID:      svc.UID{Name: "the-service", Namespace: "the-namespace", Instance: "the-instance"},
+				},
+				Type:         request.EventTypeHTTPClient,
+				Method:       "GET",
+				Route:        "/v1/traces",
+				RequestStart: 100,
+				End:          200,
+			}})
+
+			res := readMetricsByName(t, metricRecords, timeout,
+				reporter.spanMetricsLatencyName(),
+				reporter.spanMetricsCallsName(),
+			)
+			require.Len(t, res, 2)
+
+			wantAttrs := []string{
+				string(attr.ServiceName.OTEL()),
+				string(attr.ServiceInstanceID.OTEL()),
+				string(attr.ServiceNamespace.OTEL()),
+				string(attr.SpanKind.OTEL()),
+				string(attr.SpanName.OTEL()),
+				string(attr.StatusCode.OTEL()),
+				string(attr.Source.OTEL()),
+				string(attr.TelemetrySDKLanguage.OTEL()),
+			}
+
+			wantUnits := map[string]string{
+				reporter.spanMetricsLatencyName(): tc.wantDurationUnit,
+				reporter.spanMetricsCallsName():   "",
+			}
+
+			for _, record := range res {
+				got := slices.Collect(maps.Keys(record.Attributes))
+				assert.ElementsMatchf(t, wantAttrs, got, "unexpected attribute set on %q", record.Name)
+				assert.NotContainsf(t, record.Attributes, string(attr.HostID.OTEL()),
+					"%q must not carry the host id per data point", record.Name)
+				assert.Equalf(t, "the-host", record.ResourceAttributes[string(attr.HostID.OTEL())],
+					"%q must still carry the host id on its resource", record.Name)
+				assert.Equalf(t, wantUnits[record.Name], record.Unit, "unexpected unit on %q", record.Name)
+			}
+		})
+	}
+}
+
 func TestSpanMetricsNames(t *testing.T) {
 	for _, tc := range []struct {
 		name            string
 		features        export.Features
 		expectedLatency string
 		expectedCalls   string
+		expectedUnit    string
 	}{
 		{
 			name:            "otel naming",
 			features:        export.FeatureSpanOTel,
 			expectedLatency: "traces.span.metrics.duration",
 			expectedCalls:   "traces.span.metrics.calls",
+			expectedUnit:    "s",
 		},
 		{
 			name:            "legacy naming",
 			features:        export.FeatureSpanLegacy,
 			expectedLatency: "traces_spanmetrics_latency",
 			expectedCalls:   "traces_spanmetrics_calls_total",
+			expectedUnit:    "",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mr := &MetricsReporter{jointMetricsCfg: &perapp.GlobalMetricsConfig{Features: tc.features}}
 			assert.Equal(t, tc.expectedLatency, mr.spanMetricsLatencyName())
 			assert.Equal(t, tc.expectedCalls, mr.spanMetricsCallsName())
+			assert.Equal(t, tc.expectedUnit, mr.spanMetricsDuration().Unit)
 		})
 	}
 }
@@ -1358,108 +1595,6 @@ func makeMetricsReporter(
 	return mr
 }
 
-func TestAppMetrics_TracesHostInfo(t *testing.T) {
-	ctx := t.Context()
-
-	otlp, err := collector.Start(ctx)
-	require.NoError(t, err)
-
-	now := syncedClock{now: time.Now()}
-	timeNow = now.Now
-
-	metrics := msg.NewQueue[[]request.Span](msg.ChannelBufferLen(20))
-	processEvents := msg.NewQueue[exec.ProcessEvent](msg.ChannelBufferLen(20))
-	feats := export.FeatureApplicationRED | export.FeatureApplicationHost
-	mr := makeMetricsReporter(ctx, t, []instrumentations.Instrumentation{instrumentations.InstrumentationHTTP}, feats, otlp, metrics, processEvents)
-	otelExporter := mr.reportMetrics
-	go otelExporter(ctx)
-
-	assert.Len(t, otlp.Records(), 0, "metric reported before the first span is sent")
-
-	processEvents.Send(exec.ProcessEvent{
-		Type: exec.ProcessEventCreated,
-		File: exec.New(exec.Init{
-			Service: svc.Attrs{
-				Features: feats,
-				UID:      svc.UID{Instance: "foo"},
-			},
-		}),
-	})
-
-	metrics.Send([]request.Span{
-		{Service: svc.Attrs{Features: feats, UID: svc.UID{Instance: "foo"}}, Type: request.EventTypeHTTP, Path: "/foo", RequestStart: 100, End: 200},
-	})
-
-	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		assert.NotEmpty(ct, mr.hostInfo.entries.All(),
-			"traces.host.info metric has not been created yet")
-	}, timeout, 100*time.Millisecond)
-
-	// Check expiration logic
-	processEvents.Send(exec.ProcessEvent{
-		Type: exec.ProcessEventTerminated,
-		File: exec.New(exec.Init{
-			Service: svc.Attrs{
-				Features: feats,
-				UID:      svc.UID{Instance: "foo"},
-			},
-		}),
-	})
-
-	now.Advance(50 * time.Minute)
-
-	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		assert.Empty(ct, mr.hostInfo.entries.All(),
-			"traces.host.info metric has not expired yet") // The entry should be expired
-	}, timeout, 100*time.Millisecond)
-}
-
-// The gauge reports that the host is running. A service whose every call ended
-// without a usable duration still runs, so the only traffic being unmeasured must
-// not withhold it.
-func TestAppMetrics_TracesHostInfoUnmeasuredSpans(t *testing.T) {
-	ctx := t.Context()
-
-	otlp, err := collector.Start(ctx)
-	require.NoError(t, err)
-
-	now := syncedClock{now: time.Now()}
-	timeNow = now.Now
-
-	metrics := msg.NewQueue[[]request.Span](msg.ChannelBufferLen(20))
-	processEvents := msg.NewQueue[exec.ProcessEvent](msg.ChannelBufferLen(20))
-	feats := export.FeatureApplicationRED | export.FeatureApplicationHost
-	mr := makeMetricsReporter(ctx, t, []instrumentations.Instrumentation{instrumentations.InstrumentationHTTP}, feats, otlp, metrics, processEvents)
-	go mr.reportMetrics(ctx)
-
-	processEvents.Send(exec.ProcessEvent{
-		Type: exec.ProcessEventCreated,
-		File: exec.New(exec.Init{
-			Service: svc.Attrs{
-				Features: feats,
-				UID:      svc.UID{Instance: "foo"},
-			},
-		}),
-	})
-
-	unmeasured := request.Span{
-		Service:             svc.Attrs{Features: feats, UID: svc.UID{Instance: "foo"}},
-		Type:                request.EventTypeHTTPClient,
-		Path:                "/foo",
-		RequestStart:        100,
-		End:                 200,
-		ResponseObservation: request.ResponseReceived,
-	}
-	request.SetIgnoreDurations(&unmeasured)
-
-	metrics.Send([]request.Span{unmeasured})
-
-	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		assert.NotEmpty(ct, mr.hostInfo.entries.All(),
-			"traces.host.info metric has not been created for a service whose only calls were unmeasured")
-	}, timeout, 100*time.Millisecond)
-}
-
 func TestMetricResourceAttributes(t *testing.T) {
 	// Test different filtering scenarios
 	testCases := []struct {
@@ -1628,7 +1763,7 @@ func TestMetricResourceAttributes(t *testing.T) {
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			mr := &MetricsReporter{
-				nodeMeta:            meta.NodeMeta{HostID: "test-host-id"},
+				nodeMeta:            metadata.NodeMeta{HostID: "test-host-id"},
 				userAttribSelection: tc.attributeSelect,
 			}
 

@@ -114,7 +114,7 @@ func TestRuntimeToV2DefaultConfig(t *testing.T) {
 	require.Equal(t, schema.KubernetesModeAutodetect, value(t, ext.Enrich, "enrichers", "kubernetes", "mode"))
 	require.Equal(t, schema.Duration(30*time.Second), value(t, ext.Enrich, "enrichers", "kubernetes", "informers", "initial_sync_timeout"))
 	require.Equal(t, schema.Duration(30*time.Minute), value(t, ext.Enrich, "enrichers", "kubernetes", "informers", "resync_period"))
-	require.Equal(t, []transform.Source{transform.SourceK8s}, value(t, ext.Enrich, "service_name", "sources"))
+	require.Equal(t, []transform.Source{transform.SourceK8s, transform.SourceECS}, value(t, ext.Enrich, "service_name", "sources"))
 	require.Equal(t, 1024, value(t, ext.Enrich, "service_name", "cache", "size"))
 	require.Equal(t, schema.Duration(5*time.Minute), value(t, ext.Enrich, "service_name", "cache", "ttl"))
 	require.Equal(t, "unresolved", value(t, ext.Enrich, "service_name", "unresolved_hosts", "names", "default"))
@@ -235,6 +235,7 @@ func TestRuntimeToV2CustomConfig(t *testing.T) {
 	cfg.EBPF.ContextPropagation = config.ContextPropagationAll
 	cfg.EBPF.OverrideBPFLoopEnabled = true
 	cfg.EBPF.DisableBlackBoxCP = true
+	cfg.EBPF.PopulateTraceContext = true
 	cfg.EBPF.TCBackend = config.TCBackendTCX
 	cfg.EBPF.HighRequestVolume = true
 	cfg.EBPF.BPFFSPath = "/tmp/bpf"
@@ -1022,6 +1023,7 @@ func TestRuntimeToV2StatsEnablementAndFeatures(t *testing.T) {
 		require.ElementsMatch(t, []string{
 			"tcp_rtt",
 			"tcp_failed_connections",
+			"tcp_successful_connections",
 			"tcp_retransmits",
 			"tcp_io",
 		}, value(t, ext.Capture.Network, "stats", "features"))
@@ -1040,6 +1042,7 @@ func TestRuntimeToV2StatsEnablementAndFeatures(t *testing.T) {
 		require.ElementsMatch(t, []string{
 			"tcp_rtt",
 			"tcp_failed_connections",
+			"tcp_successful_connections",
 			"tcp_retransmits",
 			"tcp_io",
 		}, value(t, ext.Capture.Network, "stats", "features"))

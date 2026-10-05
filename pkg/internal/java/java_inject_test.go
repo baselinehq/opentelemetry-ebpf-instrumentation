@@ -8,6 +8,7 @@ package javaagent
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"go.opentelemetry.io/obi/pkg/appolly/discover/exec"
 	"go.opentelemetry.io/obi/pkg/ebpf"
 	"go.opentelemetry.io/obi/pkg/export"
+	"go.opentelemetry.io/obi/pkg/internal/jvmtools/jvm"
 	"go.opentelemetry.io/obi/pkg/internal/procs"
 	"go.opentelemetry.io/obi/pkg/obi"
 )
@@ -173,6 +175,9 @@ func TestJavaInjector_CopyAgent(t *testing.T) {
 		{
 			name: "error when target directory not writable",
 			setupTempDir: func(t *testing.T, _ app.PID) string {
+				if os.Geteuid() == 0 {
+					t.Skip("permission checks are not meaningful when running as root")
+				}
 				tmpDir := t.TempDir()
 				procRoot := filepath.Join(tmpDir, "proc", "root")
 				tmpPath := filepath.Join(procRoot, "tmp")
@@ -180,10 +185,12 @@ func TestJavaInjector_CopyAgent(t *testing.T) {
 				require.NoError(t, os.Chmod(tmpPath, 0o555))
 				return tmpDir
 			},
-			envVars:       map[string]string{},
-			pid:           1000,
-			expectError:   true,
-			errorContains: "unable to create target OBI java agent",
+			envVars:     map[string]string{},
+			pid:         1000,
+			expectError: true,
+			// dirOK rejects non-writable directories, so the failure surfaces
+			// from findTempDir before copyAgent attempts to create the file
+			errorContains: "couldn't find suitable temp directory",
 			verifyFile:    false,
 		},
 		{
@@ -376,6 +383,9 @@ func TestDirOK(t *testing.T) {
 		name      string
 		setupDirs func(t *testing.T) (root string, dir string)
 		expected  bool
+		// skipAsRoot marks cases whose outcome depends on permission bits,
+		// which the kernel ignores for root
+		skipAsRoot bool
 	}{
 		{
 			name: "valid directory exists",
@@ -385,7 +395,8 @@ func TestDirOK(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Join(root, strings.TrimPrefix(dir, "/")), 0o755))
 				return root, dir
 			},
-			expected: true,
+			expected:   true,
+			skipAsRoot: false,
 		},
 		{
 			name: "directory does not exist",
@@ -393,7 +404,8 @@ func TestDirOK(t *testing.T) {
 				root := t.TempDir()
 				return root, "/nonexistent"
 			},
-			expected: false,
+			expected:   false,
+			skipAsRoot: false,
 		},
 		{
 			name: "path is a file not a directory",
@@ -403,7 +415,8 @@ func TestDirOK(t *testing.T) {
 				require.NoError(t, os.WriteFile(filepath.Join(root, strings.TrimPrefix(file, "/")), []byte("content"), 0o644))
 				return root, file
 			},
-			expected: false,
+			expected:   false,
+			skipAsRoot: false,
 		},
 		{
 			name: "nested directory exists",
@@ -413,14 +426,16 @@ func TestDirOK(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Join(root, strings.TrimPrefix(dir, "/")), 0o755))
 				return root, dir
 			},
-			expected: true,
+			expected:   true,
+			skipAsRoot: false,
 		},
 		{
 			name: "empty root path",
 			setupDirs: func(_ *testing.T) (string, string) {
 				return "", "/tmp"
 			},
-			expected: false,
+			expected:   false,
+			skipAsRoot: false,
 		},
 		{
 			name: "empty dir path",
@@ -428,7 +443,8 @@ func TestDirOK(t *testing.T) {
 				root := t.TempDir()
 				return root, ""
 			},
-			expected: false,
+			expected:   false,
+			skipAsRoot: false,
 		},
 		{
 			name: "absolute path directory",
@@ -438,7 +454,8 @@ func TestDirOK(t *testing.T) {
 				require.NoError(t, os.MkdirAll(filepath.Join(root, strings.TrimPrefix(dir, "/")), 0o755))
 				return root, dir
 			},
-			expected: true,
+			expected:   true,
+			skipAsRoot: false,
 		},
 		{
 			name: "relative traversal escapes root",
@@ -446,7 +463,8 @@ func TestDirOK(t *testing.T) {
 				root := t.TempDir()
 				return root, "../../../etc"
 			},
-			expected: false,
+			expected:   false,
+			skipAsRoot: false,
 		},
 		{
 			name: "directory with no permissions",
@@ -462,12 +480,59 @@ func TestDirOK(t *testing.T) {
 				})
 				return root, dir
 			},
-			expected: true,
+			expected:   false,
+			skipAsRoot: true,
+		},
+		{
+			name: "directory that is not writable",
+			setupDirs: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				dir := "/readonly"
+				dirPath := filepath.Join(root, strings.TrimPrefix(dir, "/"))
+				require.NoError(t, os.MkdirAll(dirPath, 0o555))
+				t.Cleanup(func() {
+					err := os.Chmod(dirPath, 0o755)
+					assert.NoError(t, err)
+				})
+				return root, dir
+			},
+			expected:   false,
+			skipAsRoot: true,
+		},
+		{
+			name: "directory that is not traversable",
+			setupDirs: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				dir := "/noexec"
+				dirPath := filepath.Join(root, strings.TrimPrefix(dir, "/"))
+				require.NoError(t, os.MkdirAll(dirPath, 0o644))
+				t.Cleanup(func() {
+					err := os.Chmod(dirPath, 0o755)
+					assert.NoError(t, err)
+				})
+				return root, dir
+			},
+			expected:   false,
+			skipAsRoot: true,
+		},
+		{
+			name: "writable directory passes the full access check",
+			setupDirs: func(t *testing.T) (string, string) {
+				root := t.TempDir()
+				dir := "/writable"
+				require.NoError(t, os.MkdirAll(filepath.Join(root, strings.TrimPrefix(dir, "/")), 0o755))
+				return root, dir
+			},
+			expected:   true,
+			skipAsRoot: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.skipAsRoot && os.Geteuid() == 0 {
+				t.Skip("permission checks are not meaningful when running as root")
+			}
 			root, dir := tt.setupDirs(t)
 			result := dirOK(root, dir)
 			assert.Equal(t, tt.expected, result)
@@ -616,6 +681,56 @@ func (a *blockingResponseAttacher) Attach(
 ) (io.ReadCloser, error) {
 	context.AfterFunc(ctx, func() { _ = a.response.Close() })
 	return a.response, nil
+}
+
+type withheldSignalAttacher struct {
+	attempts int
+}
+
+func (*withheldSignalAttacher) Init()                         {}
+func (*withheldSignalAttacher) Cleanup(context.Context) error { return nil }
+func (*withheldSignalAttacher) Terminate() error              { return nil }
+func (a *withheldSignalAttacher) Attach(
+	context.Context,
+	*procs.ProcessHandle,
+	[]string,
+	bool,
+) (io.ReadCloser, error) {
+	a.attempts++
+	return nil, fmt.Errorf("%w: process 1: withheld", jvm.ErrSignalWithheld)
+}
+
+// A withheld signal is a decision about the JVM, not a failure to reach it, so
+// it must survive to the caller as itself rather than being reported as an
+// unsupported Java version. The attach is not retried afterwards.
+func TestJavaInjector_NewExecutableReportsWithheldSignal(t *testing.T) {
+	pid := app.PID(os.Getpid())
+	startTime, err := procs.StartTime(pid)
+	require.NoError(t, err)
+	process, err := procs.OpenProcessHandle(pid, startTime)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, process.Close()) })
+
+	attacher := &withheldSignalAttacher{}
+	injector := &JavaInjector{
+		log: slog.Default(),
+		cfg: &obi.Config{Java: obi.JavaConfig{Enabled: true, Timeout: time.Hour}},
+		newAttacher: func(*slog.Logger, int64, func(int64, func() error) error) jvmAttacher {
+			return attacher
+		},
+	}
+
+	err = injector.NewExecutable(context.Background(), InjectionTarget{
+		Type:      svc.InstrumentableJava,
+		Pid:       pid,
+		StartTime: startTime,
+		Process:   process,
+	})
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, jvm.ErrSignalWithheld)
+	assert.NotContains(t, err.Error(), "unsupported Java version")
+	assert.Equal(t, 1, attacher.attempts)
 }
 
 // The queue is only serialized if cancellation joins the response reader. A

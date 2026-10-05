@@ -69,7 +69,7 @@ func TestExecutableIdentity(t *testing.T) {
 func TestScanForgetsExitedExecutables(t *testing.T) {
 	proc := t.TempDir()
 	for _, pid := range []string{"1", "2"} {
-		if err := os.Mkdir(filepath.Join(proc, pid), 0700); err != nil {
+		if err := os.Mkdir(filepath.Join(proc, pid), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.Symlink("/bin/sh", filepath.Join(proc, pid, "exe")); err != nil {
@@ -104,11 +104,11 @@ func TestCachedNonGoExecutableDiscoversLateOpenSSL(t *testing.T) {
 	}
 	proc := t.TempDir()
 	root := filepath.Join(proc, "1", "root")
-	if err := os.MkdirAll(root, 0700); err != nil {
+	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	source := filepath.Join(proc, "ssl.c")
-	if err := os.WriteFile(source, []byte("int SSL_read(void) { return 0; }\nint SSL_write(void) { return 0; }\n"), 0600); err != nil {
+	if err := os.WriteFile(source, []byte("int SSL_read(void) { return 0; }\nint SSL_write(void) { return 0; }\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := exec.Command(cc, "-shared", "-fPIC", "-o", filepath.Join(root, "libssl.so.3"), source).CombinedOutput(); err != nil {
@@ -119,7 +119,7 @@ func TestCachedNonGoExecutableDiscoversLateOpenSSL(t *testing.T) {
 	if got := classifyExecutable(proc, 1, "/bin/sh", id, cache); got != tlsNone {
 		t.Fatalf("before dlopen: %v", got)
 	}
-	if err := os.WriteFile(filepath.Join(proc, "1", "maps"), []byte("1000-2000 r-xp 0000 00:00 1 /libssl.so.3\n"), 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(proc, "1", "maps"), []byte("1000-2000 r-xp 0000 00:00 1 /libssl.so.3\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if got := classifyExecutable(proc, 1, "/bin/sh", id, cache); got != tlsGeneric {

@@ -31,7 +31,7 @@ func testHTTPTracesNodeManualSpans(t *testing.T) {
 
 	var trace jaeger.Trace
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		resp, err := http.Get(jaegerQueryURL + "?service=testserver&operation=GET%20%2Fmanual")
+		resp, err := getJaeger(jaegerQueryURL + "?service=testserver&operation=GET%20%2Fmanual")
 		require.NoError(ct, err)
 		if resp == nil {
 			return
@@ -68,7 +68,8 @@ func testHTTPTracesNodeManualSpans(t *testing.T) {
 
 	// "checkout" is the root manual span. It must share the automatic trace
 	// and be re-anchored as a child of the "processing" sub-span — this is
-	// the eBPF correlation via traces_ctx_v1, the whole point of the feature.
+	// the eBPF correlation via the request fd the span sentinel carries, the
+	// whole point of the feature.
 	res = trace.FindByOperationName("checkout", "internal")
 	require.Len(t, res, 1)
 	checkout := res[0]
@@ -123,6 +124,28 @@ func testHTTPTracesNodeManualSpans(t *testing.T) {
 		jaeger.Tag{Key: "span.kind", Type: "string", Value: "internal"},
 	)
 	assert.Empty(t, sd, sd.String())
+
+	// The outgoing HTTP call made INSIDE "checkout" must produce an OBI
+	// automatic (eBPF) client span that nests as a CHILD of "checkout" — not as
+	// a sibling under the server span. This is the -mspan/ override feature:
+	// while the manual span is active, OBI parents its automatic client spans
+	// under the manual span. Everything stays in the one automatic trace with
+	// the correct server root. Identified by the outgoing target rather than by
+	// span.kind, which the manual "charge-card" span also carries.
+	res = trace.FindByOperationName("GET /", "client")
+	require.Len(t, res, 1)
+	client := res[0]
+	p, ok = trace.ParentOf(&client)
+	require.True(t, ok)
+	assert.Equal(t, checkout.SpanID, p.SpanID,
+		"the eBPF client span must be a child of the manual span, not of the server span")
+	assert.Equal(t, traceID, client.TraceID, "client span must join the automatic trace")
+	sd = client.Diff(
+		jaeger.Tag{Key: "http.request.method", Type: "string", Value: "GET"},
+		jaeger.Tag{Key: "server.address", Type: "string", Value: "grafana.com"},
+		jaeger.Tag{Key: "span.kind", Type: "string", Value: "client"},
+	)
+	assert.Empty(t, sd, sd.String())
 }
 
 // testHTTPTracesNodeManualBackgroundSpan covers the stale-context clear: the
@@ -139,7 +162,7 @@ func testHTTPTracesNodeManualBackgroundSpan(t *testing.T) {
 
 	var trace jaeger.Trace
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		resp, err := http.Get(jaegerQueryURL + "?service=testserver&operation=GET%20%2Fmanual-slow")
+		resp, err := getJaeger(jaegerQueryURL + "?service=testserver&operation=GET%20%2Fmanual-slow")
 		require.NoError(ct, err)
 		if resp == nil {
 			return
@@ -171,7 +194,7 @@ func testHTTPTracesNodeManualBackgroundSpan(t *testing.T) {
 
 	// The background spans are still captured, on their own traces.
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		resp, err := http.Get(jaegerQueryURL + "?service=testserver&operation=bg-tick")
+		resp, err := getJaeger(jaegerQueryURL + "?service=testserver&operation=bg-tick")
 		require.NoError(ct, err)
 		if resp == nil {
 			return

@@ -229,6 +229,11 @@ func TestTraceName(t *testing.T) {
 		{name: "SQL query summary wins", span: &Span{Type: EventTypeSQLClient, Method: "SELECT", DBQuerySummary: "SELECT users orders", DBNamespace: "mydb"}, expected: "SELECT users orders"},
 		{name: "SQL empty", span: &Span{Type: EventTypeSQLClient}, expected: "SQL"},
 
+		// Elasticsearch spans
+		{name: "Elasticsearch index", span: &Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeElasticsearch, DBNamespace: "cluster-a", Elasticsearch: &Elasticsearch{DBOperationName: "search", DBCollectionName: "my-index"}}, expected: "search my-index"},
+		{name: "Elasticsearch no index with cluster", span: &Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeElasticsearch, DBNamespace: "cluster-a", Host: "es", HostPort: 9200, Elasticsearch: &Elasticsearch{DBOperationName: "search"}}, expected: "search cluster-a"},
+		{name: "Elasticsearch no index no cluster", span: &Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeElasticsearch, Host: "es", HostPort: 9200, Elasticsearch: &Elasticsearch{DBOperationName: "search"}}, expected: "search es:9200"},
+
 		// Redis spans
 		{name: "Redis client", span: &Span{Type: EventTypeRedisClient, Method: "GET"}, expected: "GET"},
 		{name: "Redis empty", span: &Span{Type: EventTypeRedisClient}, expected: "REDIS"},
@@ -261,6 +266,8 @@ func TestTraceName(t *testing.T) {
 		// JSON-RPC spans
 		{name: "JSON-RPC with method", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeJSONRPC, JSONRPC: &JSONRPC{Method: "subtract", Version: "2.0"}}, expected: "subtract"},
 		{name: "JSON-RPC no method", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeJSONRPC, JSONRPC: &JSONRPC{Version: "2.0"}}, expected: "jsonrpc"},
+		{name: "Go net/rpc qualified method", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeJSONRPC, JSONRPC: &JSONRPC{Method: "Arith.Traceme", Version: JSONRPCVersionV1, ServiceQualified: true}}, expected: "Arith/Traceme"},
+		{name: "JSON-RPC dotted method stays whole", span: &Span{Type: EventTypeHTTP, SubType: HTTPSubtypeJSONRPC, JSONRPC: &JSONRPC{Method: "inventory.lookup.v2", Version: "2.0"}}, expected: "inventory.lookup.v2"},
 		{name: "JSON-RPC client", span: &Span{Type: EventTypeHTTPClient, SubType: HTTPSubtypeJSONRPC, JSONRPC: &JSONRPC{Method: "getUser", Version: "2.0"}}, expected: "getUser"},
 
 		// Other spans
@@ -724,7 +731,8 @@ func TestSerializeJSONSpans(t *testing.T) {
 				Code:     123,
 			},
 			MessagingInfo: &MessagingInfo{
-				Partition: 5,
+				HasPartition: true,
+				Partition:    5,
 			},
 		}
 
@@ -2192,6 +2200,51 @@ func TestMessagingOperationTypeOf(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.expected, MessagingOperationTypeOf(tc.operationName))
+		})
+	}
+}
+
+func TestJSONRPCQualifiedMethod(t *testing.T) {
+	for _, tc := range []struct {
+		method string
+		want   string
+	}{
+		{"Arith.Multiply", "Arith/Multiply"},
+		{"Arith.Traceme", "Arith/Traceme"},
+		// A namespaced service keeps its dots; only the method separates.
+		{"com.example.EchoService.Echo", "com.example.EchoService/Echo"},
+		// net/rpc assigns the dot no special meaning beyond the split, so a
+		// service named `rpc` is a service like any other.
+		{"rpc.discover", "rpc/discover"},
+		// Nothing to qualify.
+		{"subtract", "subtract"},
+		{"", ""},
+		// Malformed input is passed through rather than mangled.
+		{".leading", ".leading"},
+		{"trailing.", "trailing."},
+	} {
+		t.Run(tc.method, func(t *testing.T) {
+			rpc := &JSONRPC{Method: tc.method, Version: JSONRPCVersionV1, ServiceQualified: true}
+			assert.Equal(t, tc.want, rpc.QualifiedMethod())
+		})
+	}
+}
+
+// Only net/rpc names a service with a dot. JSON-RPC takes arbitrary method
+// names, so a payload-extracted method must survive untouched however many
+// dots it carries, whatever protocol version it declares.
+func TestJSONRPCQualifiedMethodLeavesPayloadExtractedMethodsAlone(t *testing.T) {
+	for _, version := range []string{"2.0", JSONRPCVersionV1, ""} {
+		t.Run("version "+version, func(t *testing.T) {
+			for _, method := range []string{
+				"inventory.lookup.v2",
+				"Arith.Multiply",
+				"rpc.discover",
+				"subtract",
+			} {
+				rpc := &JSONRPC{Method: method, Version: version}
+				assert.Equal(t, method, rpc.QualifiedMethod())
+			}
 		})
 	}
 }

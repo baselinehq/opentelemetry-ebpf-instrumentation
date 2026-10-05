@@ -45,6 +45,9 @@ Attributes carried on OBI's CUDA GPU metrics.
 
 | Attribute | Type | Stability | Description | Examples |
 | --- | --- | --- | --- | --- |
+| `cuda.device.index` | int | development | Index of the CUDA device the call ran on, as the process sees it. The attribute is only present after the calling thread has selected or queried a device through `cudaSetDevice` or `cudaGetDevice`; it is omitted when no device binding was observed. `CUDA_VISIBLE_DEVICES` remaps the index, which is why it may repeat across processes; `cuda.device.uuid` identifies the physical GPU. |  |
+| `cuda.device.model` | string | development | Model name of the CUDA device the call ran on, as reported by the CUDA introspection APIs. Omitted when the process never asked CUDA about the device. | NVIDIA H20-3e |
+| `cuda.device.uuid` | string | development | UUID of the CUDA device the call ran on, as reported by the CUDA introspection APIs. It is the bare UUID, which is the uuid column of `nvidia-smi` with its `GPU-` prefix removed. Omitted when the process never asked CUDA about the device. | bed26f36-a0eb-994e-a0a6-a8437e7ca751 |
 | `cuda.memcpy.kind` | enum | development | Direction of a CUDA memory copy, mirroring the `cudaMemcpyKind` enum of the CUDA Runtime API. | MemcpyHostToHost; MemcpyHostToDevice; MemcpyDeviceToHost; MemcpyDeviceToDevice; MemcpyDefault |
 
 ## `registry.obi.http`
@@ -151,7 +154,7 @@ Attributes used by OBI's service-graph emission. The metric names and label set 
 
 ## `registry.obi.spanmetrics`
 
-Attributes used by OBI's span-metrics emission. The metric names match the output of the OTel collector-contrib `spanmetricsconnector` so the same dashboards consume both OBI-emitted and connector-emitted data. Emitted when OBI's `application_span_otel` metrics feature is enabled, except the `traces_spanmetrics_*_size_total` counters, which are gated separately on the deprecated `application_span_sizes` feature. `service.name`, `service.namespace`, `service.instance.id`, `host.id` and `telemetry.sdk.language` are referenced from upstream OpenTelemetry semantic conventions rather than redeclared here, and appear on the metric groups below because `spanMetricAttributes` puts them on the data point rather than on the resource. The OBI-specific `source` attribute is declared in `obi_internal/registry.yaml`. See: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/connector/spanmetricsconnector
+Attributes used by OBI's span-metrics emission. The metric names match the output of the OTel collector-contrib `spanmetricsconnector` so the same dashboards consume both OBI-emitted and connector-emitted data. Emitted when OBI's `application_span_otel` metrics feature is enabled, except the `traces_spanmetrics_*_size_total` counters, which are gated separately on the deprecated `application_span_sizes` feature. `service.name`, `service.namespace`, `service.instance.id` and `telemetry.sdk.language` are referenced from upstream OpenTelemetry semantic conventions rather than redeclared here, and appear on the metric groups below because `spanMetricAttributes` puts them on the data point rather than on the resource. The OBI-specific `source` attribute is declared in `obi_internal/registry.yaml`. See: https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/main/connector/spanmetricsconnector
 
 | Attribute | Type | Stability | Description | Examples |
 | --- | --- | --- | --- | --- |
@@ -162,11 +165,11 @@ Attributes used by OBI's span-metrics emission. The metric names match the outpu
 
 ## `registry.obi.stats`
 
-Attributes carried on OBI's per-connection TCP statistics. Emitted when the `stats_tcp_rtt` or `stats_tcp_failed_connections` features are enabled (both rolled into the umbrella `stats` feature). Like network-flow metrics, the per-data-point attribute set is configurable via `attributes.select`.
+Attributes carried on OBI's per-connection TCP statistics. Emitted when the `stats_tcp_rtt`, `stats_tcp_failed_connections` or `stats_tcp_successful_connections` features are enabled (all rolled into the umbrella `stats` feature). Like network-flow metrics, the per-data-point attribute set is configurable via `attributes.select`.
 
 | Attribute | Type | Stability | Description | Examples |
 | --- | --- | --- | --- | --- |
-| `network.tcp.handshake.role` | enum | development | Role of the local endpoint in the failed TCP three-way handshake (`client` initiated the SYN, `server` was awaiting it). | client; server; unknown |
+| `network.tcp.handshake.role` | enum | development | Role of the local endpoint in the TCP three-way handshake (`client` initiated the SYN, `server` was awaiting it). | client; server; unknown |
 | `reason` | enum | development | Classification of why a TCP connection failed. | refused; reset; timed-out; host-unreachable; net-unreachable; other; unknown |
 
 ## `registry.obi.traces_resource`
@@ -199,7 +202,7 @@ OBI overrides of `gen_ai.provider.name` (upstream enum extended with the provide
 
 | Attribute | Type | Stability | Description | Examples |
 | --- | --- | --- | --- | --- |
-| `gen_ai.operation.name` | string | development | The name of the operation being performed. | chat; embeddings; response; conversation; invoke_model; rerank; execute_tool |
+| `gen_ai.operation.name` | string | development | The name of the operation being performed. | chat; embeddings; response; conversation; invoke_model; rerank; execute_tool; _OTHER |
 | `gen_ai.provider.name` | enum | development | The Generative AI provider as identified by the client or server instrumentation. | openai; gcp.gen_ai; gcp.vertex_ai; gcp.gemini; anthropic; cohere; azure.ai.inference; azure.ai.openai; … |
 
 ## `x.obi.messaging`
@@ -220,11 +223,11 @@ OBI override of `network.type` extending the upstream enum with `arp` for the AR
 
 ## `x.obi.openai`
 
-OBI override of `openai.api.type` extending the upstream enum with the embeddings API, which OBI detects but upstream semconv has no member for.
+OBI override of `openai.api.type` extending the upstream enum with the embeddings and legacy text-completions APIs, which OBI detects but upstream semconv has no members for.
 
 | Attribute | Type | Stability | Description | Examples |
 | --- | --- | --- | --- | --- |
-| `openai.api.type` | enum | development | The type of OpenAI API being used. | chat_completions; responses; embeddings |
+| `openai.api.type` | enum | development | The type of OpenAI API being used. | chat_completions; responses; embeddings; text_completions |
 
 ## `x.obi.rpc`
 

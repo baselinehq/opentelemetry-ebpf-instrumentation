@@ -40,6 +40,7 @@ func testREDMetricsHTTP(t *testing.T) {
 		t.Run(testCaseURL, func(t *testing.T) {
 			waitForTestComponents(t, testCaseURL)
 			testREDMetricsForHTTPLibrary(t, testCaseURL, "testserver", "integration-test")
+			testREDMetricsForHTTPServerError(t, testCaseURL, "testserver", "integration-test")
 			testSpanMetricsForHTTPLibraryOTelFormat(t, "testserver", "integration-test")
 			testServiceGraphMetricsForHTTPLibrary(t, "integration-test")
 		})
@@ -172,7 +173,7 @@ func testSpanMetricsForJSONRPCHTTP(t *testing.T, svcName, svcNs string) {
 	pq := promtest.Client{HostPort: prometheusHostPort}
 	var results []promtest.Result
 
-	expectedSpanName := "Arith.Multiply"
+	expectedSpanName := "Arith/Multiply"
 
 	// Test span metrics
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
@@ -264,7 +265,7 @@ func testREDMetricsForJSONRPCHTTP(t *testing.T, url, svcName, svcNs string) {
 	jsonBody, err := os.ReadFile(path.Join(pathRoot, "internal", "test", "integration", "components", "testserver", "jsonrpc", "body", "formated.json"))
 	require.NoError(t, err)
 	urlPath := "/jsonrpc"
-	expectedMethod := "Arith.Multiply"
+	expectedMethod := "Arith/Multiply"
 
 	for range 4 {
 		doHTTPPost(t, url+urlPath, 200, jsonBody)
@@ -289,6 +290,44 @@ func testREDMetricsForJSONRPCHTTP(t *testing.T, url, svcName, svcNs string) {
 			addr := res.Metric["client_address"]
 			assert.NotNil(ct, addr)
 		}
+	}, testTimeout, 100*time.Millisecond)
+}
+
+func testREDMetricsForHTTPServerError(t *testing.T, url, svcName, svcNs string) {
+	path := "/basic/" + rndStr()
+
+	for range 3 {
+		ti.DoHTTPGet(t, url+path+"?status=500", 500)
+		ti.DoHTTPGet(t, url+path+"?status=404", 404)
+	}
+
+	pq := promtest.Client{HostPort: prometheusHostPort}
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		results, err := pq.Query(`http_server_request_duration_seconds_count{` +
+			`http_request_method="GET",` +
+			`http_response_status_code="500",` +
+			`error_type="500",` +
+			`service_namespace="` + svcNs + `",` +
+			`service_name="` + svcName + `",` +
+			`url_path="` + path + `"}`)
+		require.NoError(ct, err)
+		enoughPromResults(ct, results)
+		val := totalPromCount(ct, results)
+		assert.LessOrEqual(ct, 3, val)
+	}, testTimeout, 100*time.Millisecond)
+
+	require.EventuallyWithT(t, func(ct *assert.CollectT) {
+		results, err := pq.Query(`http_server_request_duration_seconds_count{` +
+			`http_request_method="GET",` +
+			`http_response_status_code="404",` +
+			`error_type="",` +
+			`service_namespace="` + svcNs + `",` +
+			`service_name="` + svcName + `",` +
+			`url_path="` + path + `"}`)
+		require.NoError(ct, err)
+		enoughPromResults(ct, results)
+		val := totalPromCount(ct, results)
+		assert.LessOrEqual(ct, 3, val)
 	}, testTimeout, 100*time.Millisecond)
 }
 
@@ -897,17 +936,6 @@ func testPrometheusOBIBuildInfo(t *testing.T) {
 	require.EventuallyWithT(t, func(ct *assert.CollectT) {
 		var err error
 		results, err = pq.Query(`obi_build_info{target_lang="go"}`)
-		require.NoError(ct, err)
-		require.NotEmpty(ct, results)
-	}, testTimeout, 100*time.Millisecond)
-}
-
-func testHostInfo(t *testing.T) {
-	pq := promtest.Client{HostPort: prometheusHostPort}
-	var results []promtest.Result
-	require.EventuallyWithT(t, func(ct *assert.CollectT) {
-		var err error
-		results, err = pq.Query(`traces_host_info{}`)
 		require.NoError(ct, err)
 		require.NotEmpty(ct, results)
 	}, testTimeout, 100*time.Millisecond)

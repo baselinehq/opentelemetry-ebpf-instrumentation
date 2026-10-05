@@ -4,7 +4,7 @@
 // @opentelemetry/api global registry and its ProxyTracerProvider are process
 // singletons, so each scenario must run in its own process to avoid bleed.
 //
-// The eBPF transport is stubbed by intercepting the sentinel fs.accessSync
+// The eBPF transport is stubbed by intercepting the sentinel fs.existsSync
 // path the bridge uses (see spanbridge.js), so no eBPF/root is required.
 
 const fs = require('fs');
@@ -13,15 +13,44 @@ const path = require('path');
 const scenario = process.argv[2];
 
 const bridgeCaptured = [];
-const origAccess = fs.accessSync;
-fs.accessSync = (p, ...rest) => {
-  if (typeof p === 'string' && p.startsWith('/dev/null/obi-span/')) {
-    bridgeCaptured.push(JSON.parse(p.slice('/dev/null/obi-span/'.length)).name);
-    const err = new Error('ENOTDIR');
-    err.code = 'ENOTDIR';
-    throw err;
+const bridgeFds = [];
+const bridgeIds = [];
+const SPAN_PREFIX = '/dev/null/obi-span/';
+const SPAN_FD_PREFIX = '/dev/null/obi-spanfd/';
+const FD_DIGITS = 4;
+// Manual-span context override/pop sentinels (-mspan/), captured as a sequence
+// of raw payloads: a 48-hex <traceId><spanId> for an override, or '-' for a pop.
+const mspanCaptured = [];
+// The real fs.existsSync returns false for the sentinel path rather than
+// throwing. It can still throw under Node's permission model, which is what
+// the 'throwing-transport' scenario reproduces.
+let transportThrows = false;
+const origExists = fs.existsSync;
+fs.existsSync = (p, ...rest) => {
+  if (typeof p === 'string' && (p.startsWith(SPAN_FD_PREFIX) || p.startsWith(SPAN_PREFIX))) {
+    let json;
+    if (p.startsWith(SPAN_FD_PREFIX)) {
+      bridgeFds.push(p.slice(SPAN_FD_PREFIX.length, SPAN_FD_PREFIX.length + FD_DIGITS));
+      json = p.slice(SPAN_FD_PREFIX.length + FD_DIGITS);
+    } else {
+      bridgeFds.push(null);
+      json = p.slice(SPAN_PREFIX.length);
+    }
+    const rec = JSON.parse(json);
+    bridgeCaptured.push(rec.name);
+    bridgeIds.push({ tid: rec.tid, sid: rec.sid });
+    if (transportThrows) {
+      const err = new Error('permission denied by policy');
+      err.code = 'ERR_ACCESS_DENIED';
+      throw err;
+    }
+    return false;
   }
-  return origAccess(p, ...rest);
+  if (typeof p === 'string' && p.startsWith('/dev/null/obi-mspan/')) {
+    mspanCaptured.push(p.slice('/dev/null/obi-mspan/'.length));
+    return false;
+  }
+  return origExists(p, ...rest);
 };
 
 // Load and run the bridge the same way OBI's injector does: evaluate the file
@@ -79,6 +108,24 @@ async function run() {
       tracer.startSpan('s1').end();
       break;
     }
+    case 'throwing-transport': {
+      // fs.existsSync throwing must not escape span.end(), which applications
+      // idiomatically call from a finally block.
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      transportThrows = true;
+      let threw = null;
+      try {
+        tracer.startSpan('s1').end();
+      } catch (e) {
+        threw = String(e && e.message);
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      transportThrows = false;
+      fs.existsSync = origExists;
+      process.stdout.write(JSON.stringify({ bridge: bridgeCaptured, app: appCaptured, threw }));
+      return;
+    }
     case 'hostile-attribute': {
       // An app attribute/name whose toString() throws must NOT escape through
       // span.end() (idiomatically called in a finally block). With no SDK the
@@ -100,7 +147,7 @@ async function run() {
         threw = String(e && e.message);
       }
       await new Promise((r) => setTimeout(r, 20));
-      fs.accessSync = origAccess;
+      fs.existsSync = origExists;
       process.stdout.write(JSON.stringify({ bridge: bridgeCaptured, app: appCaptured, threw }));
       return;
     }
@@ -116,13 +163,99 @@ async function run() {
       tracer.startSpan('after-preacquired').end(); // -> app (pre-acquired tracer)
       break;
     }
+    case 'mspan-nesting': {
+      // Active manual spans must publish the -mspan/ context override on enter
+      // and restore the enclosing span (or pop to none) on exit, so OBI's eBPF
+      // client spans nest under the innermost active manual span. Assert the
+      // exact override/pop sequence around a nested startActiveSpan pair.
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      const label = new Map();
+      tracer.startActiveSpan('outer', (outer) => {
+        label.set(outer.spanContext().spanId, 'outer');
+        tracer.startActiveSpan('inner', (inner) => {
+          label.set(inner.spanContext().spanId, 'inner');
+          inner.end();
+        });
+        outer.end();
+      });
+      const seq = mspanCaptured.map((pl) => {
+        if (pl === '-') return 'pop';
+        const spanId = pl.slice(32); // 48-hex payload = 32-hex traceId + 16-hex spanId
+        return label.get(spanId) || 'override:' + spanId;
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      fs.existsSync = origExists;
+      process.stdout.write(JSON.stringify({ mspan: seq, bridge: bridgeCaptured }));
+      return;
+    }
+    case 'mspan-async-release': {
+      // A manual span whose scope ends inside an async callback must not leave
+      // its override latched: the async_hooks 'after' boundary pops it. Without
+      // that pop the last sentinel is an override, and every later eBPF client
+      // span and enriched log line would carry a span that already ended.
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      await new Promise((resolve) => {
+        tracer.startActiveSpan('job', (job) => {
+          setTimeout(() => {
+            job.end();
+            resolve();
+          }, 5);
+        });
+      });
+      await new Promise((r) => setTimeout(r, 20));
+      const seq = mspanCaptured.map((pl) => (pl === '-' ? 'pop' : 'override'));
+      fs.existsSync = origExists;
+      process.stdout.write(JSON.stringify({ mspan: seq, bridge: bridgeCaptured }));
+      return;
+    }
+    case 'mspan-request-fd': {
+      const store = { fd: 7 };
+      globalThis[Symbol.for('otel-ebpf-instrumentation.fdextractor')] = { requestFd: () => store.fd };
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      tracer.startActiveSpan('in-request', (s) => s.end());
+      store.fd = -1;
+      tracer.startActiveSpan('no-request', (s) => s.end());
+      const seq = mspanCaptured.map((pl) => (pl === '-' ? 'pop' : pl.length));
+      await new Promise((r) => setTimeout(r, 20));
+      fs.existsSync = origExists;
+      process.stdout.write(JSON.stringify({ mspan: seq, fd: mspanCaptured[0].slice(0, 4) }));
+      return;
+    }
+    case 'request-fd': {
+      const store = { fd: -1 };
+      globalThis[Symbol.for('otel-ebpf-instrumentation.fdextractor')] = { requestFd: () => store.fd };
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      store.fd = 42;
+      tracer.startSpan('in-request').end();
+      store.fd = -1;
+      tracer.startSpan('no-request').end();
+      store.fd = 12345;
+      tracer.startSpan('fd-too-wide').end();
+      break;
+    }
+    case 'no-fdextractor': {
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      tracer.startSpan('s1').end();
+      break;
+    }
+    case 'id-pool': {
+      const tracer = trace.getTracer('app');
+      injectBridge();
+      for (let i = 0; i < 400; i++) tracer.startSpan('s').end();
+      break;
+    }
     default:
       throw new Error('unknown scenario: ' + scenario);
   }
 
   await new Promise((r) => setTimeout(r, 20));
-  fs.accessSync = origAccess;
-  process.stdout.write(JSON.stringify({ bridge: bridgeCaptured, app: appCaptured }));
+  fs.existsSync = origExists;
+  process.stdout.write(JSON.stringify({ bridge: bridgeCaptured, app: appCaptured, fds: bridgeFds, ids: bridgeIds }));
 }
 
 run().catch((e) => {

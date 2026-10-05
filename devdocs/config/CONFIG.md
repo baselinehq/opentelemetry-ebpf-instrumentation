@@ -3,6 +3,11 @@
 Complete configuration reference for OpenTelemetry eBPF Instrumentation (OBI).
 Configuration is provided via YAML file and/or environment variables.
 
+> [!IMPORTANT]
+> This reference documents Config v1, which is frozen for backward compatibility.
+> Config v1 does not receive bug fixes or new features. Migrate to
+> [Config v2](version-2.0/migration.md) to receive configuration improvements.
+
 Generated from [`config-schema.json`](config-schema.json).
 
 ---
@@ -11,6 +16,7 @@ Generated from [`config-schema.json`](config-schema.json).
 
 - [Top-Level Properties](#top-level-properties)
 - [`attributes`](#attributes)
+- [`cloud_metadata`](#cloud-metadata)
 - [`discovery`](#discovery)
 - [`dotnet_runtime_metrics`](#dotnet-runtime-metrics)
 - [`ebpf`](#ebpf)
@@ -121,6 +127,15 @@ RetryConfig holds the retry policy for metadata fetch operations. It controls th
 | `attributes.metadata_retry.start_interval` | `duration` | `OTEL_EBPF_METADATA_RETRY_START_INTERVAL` | `500ms` | `30s`, `5m`, `1ms`, etc |  | Specifies the initial wait duration between the first and second retry attempt. |
 | `attributes.metadata_retry.timeout` | `duration` | `OTEL_EBPF_METADATA_RETRY_TIMEOUT` | `30s` | `30s`, `5m`, `1ms`, etc |  | Specifies the maximum total time allowed for all retry attempts before giving up. |
 
+## `cloud_metadata`
+
+CloudMetadataConfig configures overrides for detected cloud metadata.
+
+| YAML Path | Type | Env Var | Default | Values | Deprecated | Description |
+|---|---|---|---|---|---|---|
+| `cloud_metadata.cluster_name` | `string` | `OTEL_EBPF_CLUSTER_NAME` |  |  |  | Overrides automatic cluster detection. |
+| `cloud_metadata.region` | `string` | `OTEL_EBPF_CLOUD_REGION` |  |  |  | Overrides automatic region detection. |
+
 ## `discovery`
 
 DiscoveryConfig for the discover.ProcessFinder pipeline
@@ -131,7 +146,7 @@ DiscoveryConfig for the discover.ProcessFinder pipeline
 | `discovery.default_exclude_instrument` | [`GlobAttributes`](#globattributes)[] |  | `[{"cmd_args":{},"containers_only":false,"exe_path":{},"exports":{},"k8s_pod_annotations":null,"k8s_pod_labels":null,"languages":{},"metrics":{"features":0},"name":"","namespace":"","open_ports":{"Ranges":null},"routes":null,"sampler":null,"target_pids":null},{"cmd_args":{},"containers_only":false,"exe_path":{},"exports":{},"k8s_pod_annotations":null,"k8s_pod_labels":null,"languages":{},"metrics":{"features":0},"name":"","namespace":"","open_ports":{"Ranges":null},"routes":null,"sampler":null,"target_pids":null}]` |  |  | Defines the default exclusion patterns that prevent self-instrumentation of OBI as well as related observability tools. It must be set to an empty string or a different value if self-instrumentation is desired. |
 | `discovery.default_exclude_services` | [`RegexSelector`](#regexselector)[] |  | `[{"cmd_args":{},"containers_only":false,"exe_path":{},"exe_path_regexp":{},"exports":{},"k8s_pod_annotations":null,"k8s_pod_labels":null,"languages":{},"metrics":{"features":0},"name":"","namespace":"","open_ports":{"Ranges":null},"routes":null,"sampler":null,"target_pids":null},{"cmd_args":{},"containers_only":false,"exe_path":{},"exe_path_regexp":{},"exports":{},"k8s_pod_annotations":null,"k8s_pod_labels":null,"languages":{},"metrics":{"features":0},"name":"","namespace":"","open_ports":{"Ranges":null},"routes":null,"sampler":null,"target_pids":null}]` |  | Yes | Defines the default exclusion patterns that prevent self-instrumentation of OBI as well as related observability tools. It must be set to an empty string or a different value if self-instrumentation is desired.  Use DefaultExcludeInstrument instead |
 | `discovery.default_otlp_grpc_port` | `integer` | `OTEL_EBPF_DEFAULT_OTLP_GRPC_PORT` | `4317` |  |  | Specifies the default OTLP gRPC port (4317) to fallback on when missing environment variables on service, for checking for grpc export requests, defaults to 4317 |
-| `discovery.disabled_route_harvesters` | `string`[] |  |  | `dotnet`, `go`, `java`, `nodejs`, `python`, `ruby` |  |  |
+| `discovery.disabled_route_harvesters` | `string`[] |  |  | `dotnet`, `go`, `java`, `nodejs`, `php`, `python`, `ruby` |  |  |
 | `discovery.exclude_instrument` | [`GlobAttributes`](#globattributes)[] |  |  |  |  | Works analogously to Instrument, but the applications matching this section won't be instrumented even if they match the Instrument selection. |
 | `discovery.exclude_otel_instrumented_services` | `boolean` | `OTEL_EBPF_EXCLUDE_OTEL_INSTRUMENTED_SERVICES` | `true` |  |  | Disables instrumentation of services which are already instrumented |
 | `discovery.exclude_otel_instrumented_services_span_metrics` | `boolean` | `OTEL_EBPF_EXCLUDE_OTEL_INSTRUMENTED_SERVICES_SPAN_METRICS` | `false` |  |  | Disables generation of span metrics of services which are already instrumented |
@@ -178,12 +193,15 @@ EBPFTracer configuration for eBPF programs
 | `ebpf.high_request_volume` | `boolean` | `OTEL_EBPF_BPF_HIGH_REQUEST_VOLUME` | `false` |  |  | Optimizes for getting requests information immediately when request response is seen |
 | `ebpf.http_request_timeout` | `duration` | `OTEL_EBPF_BPF_HTTP_REQUEST_TIMEOUT` | `0s` | `30s`, `5m`, `1ms`, etc |  | Must be at least 0 |
 | `ebpf.instrument_cuda` | `integer` | `OTEL_EBPF_INSTRUMENT_CUDA` | `auto` |  |  | Enables GPU instrumentation for CUDA kernel launches and allocations |
+| `ebpf.kafka_consumer_group_cache_size` | `integer` | `OTEL_KAFKA_CONSUMER_GROUP_CACHE_SIZE` | `4096` |  |  | Kafka consumer groups cache size: number of processes whose consumer group membership, learned from group-coordination requests, is remembered and reported on consumer spans. |
+| `ebpf.kafka_consumer_group_ttl` | `duration` | `OTEL_EBPF_BPF_KAFKA_CONSUMER_GROUP_TTL` | `2m` | `30s`, `5m`, `1ms`, etc |  | Kafka consumer group membership lifetime: how long a consumer is remembered after its last group request, and how long a process is observed before its Fetches are attributed to a group. Keep it above both the heartbeat interval and the longest rebalance of classic consumers (bounded by max.poll.interval.ms, 5m by default), or their Fetches can be reported with another group of their process; a larger value delays the attribute for newly seen processes. The 2m default trades rebalances longer than that for a shorter warm-up; raise it above max.poll.interval.ms when cooperative classic consumers (Kafka Streams) share a process with another group. |
 | `ebpf.kafka_topic_uuid_cache_size` | `integer` | `OTEL_KAFKA_TOPIC_UUID_CACHE_SIZE` | `1024` |  |  | Kafka Topic UUID to Name cache size. |
 | `ebpf.max_transaction_time` | `duration` | `OTEL_EBPF_BPF_MAX_TRANSACTION_TIME` | `5m` | `30s`, `5m`, `1ms`, etc |  | Maximum time allowed for two requests to be correlated as parent -> child Some programs (e.g. load generators) keep on generating requests from the same thread in perpetuity, which can generate very large traces. We want to mark the parent trace as invalid if this happens. |
 | `ebpf.mongo_requests_cache_size` | `integer` | `OTEL_EBPF_BPF_MONGO_REQUESTS_CACHE_SIZE` | `1024` |  |  | MongoDB requests cache size. |
 | `ebpf.mssql_prepared_statements_cache_size` | `integer` | `OTEL_EBPF_BPF_MSSQL_PREPARED_STATEMENTS_CACHE_SIZE` | `1024` |  |  | MSSQL prepared statements cache size. |
 | `ebpf.mysql_prepared_statements_cache_size` | `integer` | `OTEL_EBPF_BPF_MYSQL_PREPARED_STATEMENTS_CACHE_SIZE` | `1024` |  |  | MySQL prepared statements cache size. |
 | `ebpf.override_bpfloop_enabled` | `boolean` | `OTEL_EBPF_OVERRIDE_BPF_LOOP_ENABLED` | `false` |  |  | Skips checking the kernel version for bpf_loop functionality. Some modified kernels have this backported prior to version 5.17. |
+| `ebpf.populate_trace_context` | `boolean` | `OTEL_EBPF_BPF_POPULATE_TRACE_CONTEXT` | `false` |  |  | Keeps the pinned `traces_ctx_v1` map -- the trace and span ID of the request each OS thread is currently serving -- populated for readers outside OBI, such as a profiler correlating samples with spans, or another eBPF program reading the pin directly.  Keeping the map aligned with the active request is not free: runtimes that decouple I/O from processing need a refresh on every context switch, which on Node.js means an `async_hooks` before hook running on every callback. OBI therefore only populates the map when something reads it. Its own reader -- the log enricher -- turns population on regardless of this setting; a reader outside OBI has no way to announce itself, so it opts in here.  Go channel span links may be affected: the handoff correlation falls back to this map when it cannot resolve the sending goroutine from the protocol maps, so links that relied on that fallback are lost while population is off. |
 | `ebpf.postgres_prepared_statements_cache_size` | `integer` | `OTEL_EBPF_BPF_POSTGRES_PREPARED_STATEMENTS_CACHE_SIZE` | `1024` |  |  | Postgres prepared statements cache size. |
 | `ebpf.protocol_debug_print` | `boolean` | `OTEL_EBPF_PROTOCOL_DEBUG_PRINT` | `false` |  |  | Enables debug printing of the protocol data |
 | `ebpf.stats_wakeup_data_bytes` | `integer` | `OTEL_EBPF_STATS_WAKEUP_DATA_BYTES` | `4096` |  |  | Specifies the minimum number of bytes that must be available in the stats eBPF ring buffer before waking up the userspace consumer. When 0, every submission wakes up userspace immediately. Higher values reduce wakeup overhead under high traffic at the cost of delivery latency. The value should be well below ring buffer size / flushInterval to avoid event loss. |
@@ -429,7 +447,7 @@ GlobalMetricsConfig is a placeholder for the progressive support of global and p
 
 | YAML Path | Type | Env Var | Default | Values | Deprecated | Description |
 |---|---|---|---|---|---|---|
-| `metrics.features` | `string`[] | `OTEL_EBPF_METRICS_FEATURES` | `768` | `*`, `all`, `application`, `application_host`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `application_span` (deprecated), `application_span_sizes` (deprecated) |  | Specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, stats, ... envDefault is provided to avoid breaking changes |
+| `metrics.features` | `string`[] | `OTEL_EBPF_METRICS_FEATURES` | `1536` | `*`, `all`, `application`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `stats_tcp_successful_connections`, `application_span` (deprecated), `application_span_sizes` (deprecated) |  | Specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, stats, ... envDefault is provided to avoid breaking changes |
 
 ## `name_resolver`
 
@@ -437,7 +455,15 @@ GlobalMetricsConfig is a placeholder for the progressive support of global and p
 |---|---|---|---|---|---|---|
 | `name_resolver.cache_expiry` | `duration` | `OTEL_EBPF_NAME_RESOLVER_CACHE_TTL` | `5m` | `30s`, `5m`, `1ms`, etc |  | Specifies the time-to-live of a cached IP->hostname entry. After the cached entry becomes older than this time, the IP->hostname entry will be looked up again. |
 | `name_resolver.cache_len` | `integer` | `OTEL_EBPF_NAME_RESOLVER_CACHE_LEN` | `1024` |  |  | Specifies the max size of the LRU cache that is checked before performing the name lookup. Default: 256 |
-| `name_resolver.sources` | `string`[] | `OTEL_EBPF_NAME_RESOLVER_SOURCES` | `k8s` | `dns`, `k8s`, `kube`, `kubernetes`, `rdns` |  | Specifies the backends used for name resolving. Accepted values: dns, k8s, rdns |
+| `name_resolver.sources` | `string`[] | `OTEL_EBPF_NAME_RESOLVER_SOURCES` | `k8s`, `ecs` | `dns`, `ecs`, `k8s`, `kube`, `kubernetes`, `rdns` |  | Specifies the backends used for name resolving. Accepted values: dns, ecs, k8s, rdns. The "ecs" source requires ecs:ListTasks and ecs:DescribeTasks permissions. |
+
+### `name_resolver.ecs`
+
+ECSNameResolverConfig configures ECS service name resolution.
+
+| YAML Path | Type | Env Var | Default | Values | Deprecated | Description |
+|---|---|---|---|---|---|---|
+| `name_resolver.ecs.refresh_interval` | `duration` | `OTEL_EBPF_NAME_RESOLVER_ECS_REFRESH_INTERVAL` | `30s` | `30s`, `5m`, `1ms`, etc |  | Controls how often the ECS task inventory is refreshed. |
 
 ## `network`
 
@@ -512,7 +538,7 @@ ReverseDNS is currently experimental. It is kept disabled by default and will be
 | `otel_metrics_export.buckets` | [`Buckets`](#buckets) |  |  |  |  | Buckets defines the histograms bucket boundaries, and allows users to redefine them |
 | `otel_metrics_export.endpoint` | `uri` | `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` |  |  |  |  |
 | `otel_metrics_export.extra_span_resource_attributes` | `string`[] | `OTEL_EBPF_EXTRA_SPAN_RESOURCE_ATTRIBUTES` |  |  |  | Adds extra metadata labels to OTEL span metrics from sources whose availability can't be known beforehand. For example, to add the OTEL deployment.environment resource attribute as a OTEL resource attribute, you should add `deployment.environment`. |
-| `otel_metrics_export.features` | `string`[] |  | `0` | `*`, `all`, `application`, `application_host`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `application_span` (deprecated), `application_span_sizes` (deprecated) | Yes | Features specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, ...  use the top-level metrics.features property (perapp.GlobalMetricsConfig.Features) instead. |
+| `otel_metrics_export.features` | `string`[] |  | `0` | `*`, `all`, `application`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `stats_tcp_successful_connections`, `application_span` (deprecated), `application_span_sizes` (deprecated) | Yes | Features specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, ...  use the top-level metrics.features property (perapp.GlobalMetricsConfig.Features) instead. |
 | `otel_metrics_export.histogram_aggregation` | `string` | `OTEL_EXPORTER_OTLP_METRICS_DEFAULT_HISTOGRAM_AGGREGATION` | `explicit_bucket_histogram` | `base2_exponential_bucket_histogram`, `explicit_bucket_histogram` |  |  |
 | `otel_metrics_export.insecure_skip_verify` | `boolean` | `OTEL_EBPF_INSECURE_SKIP_VERIFY` | `false` |  |  | Enables skipping TLS certificate verification (not standard, so we don't follow the same naming convention) |
 | `otel_metrics_export.instrumentations` | `string`[] | `OTEL_EBPF_METRICS_INSTRUMENTATIONS` | `*` | `*`, `aerospike`, `amqp`, `couchbase`, `dns`, `genai`, `gpu`, `grpc`, `http`, `kafka`, `memcached`, `mongo`, `mqtt`, `nats`, `redis`, `sql`, `sunrpc` |  | Allows configuration of which instrumentations should be enabled, e.g. http, grpc, sql... |
@@ -570,7 +596,7 @@ TODO: TLS
 | `prometheus_export.exemplar_filter` | `string` | `OTEL_EBPF_PROMETHEUS_EXEMPLAR_FILTER` |  |  |  | Controls when exemplars are attached to metrics. Accepted values: "always_on", "always_off", "trace_based". Defaults to "always_off": do not attach exemplars. This mimics the OTEL_METRICS_EXEMPLAR_FILTER specification. |
 | `prometheus_export.extra_resource_attributes` | `string`[] | `OTEL_EBPF_PROMETHEUS_EXTRA_RESOURCE_ATTRIBUTES` |  |  |  | Adds extra metadata labels to Prometheus metrics from sources whose availability can't be known beforehand. For example, to add the OTEL deployment.environment resource attribute as a Prometheus resource attribute, you should add `deployment.environment`. |
 | `prometheus_export.extra_span_resource_attributes` | `string`[] | `OTEL_EBPF_PROMETHEUS_EXTRA_SPAN_RESOURCE_ATTRIBUTES` |  |  |  | Adds extra metadata labels to Prometheus span metrics from sources whose availability can't be known beforehand. For example, to add the OTEL deployment.environment resource attribute as a Prometheus resource attribute, you should add `deployment.environment`. |
-| `prometheus_export.features` | `string`[] | `OTEL_EBPF_PROMETHEUS_FEATURES` | `0` | `*`, `all`, `application`, `application_host`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `application_span` (deprecated), `application_span_sizes` (deprecated) | Yes | Features specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, ...  use the top-level metrics.features property (perapp.GlobalMetricsConfig.Features) instead. |
+| `prometheus_export.features` | `string`[] | `OTEL_EBPF_PROMETHEUS_FEATURES` | `0` | `*`, `all`, `application`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `stats_tcp_successful_connections`, `application_span` (deprecated), `application_span_sizes` (deprecated) | Yes | Features specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, ...  use the top-level metrics.features property (perapp.GlobalMetricsConfig.Features) instead. |
 | `prometheus_export.instrumentations` | `string`[] | `OTEL_EBPF_PROMETHEUS_INSTRUMENTATIONS` | `*` | `*`, `aerospike`, `amqp`, `couchbase`, `dns`, `genai`, `gpu`, `grpc`, `http`, `kafka`, `memcached`, `mongo`, `mqtt`, `nats`, `redis`, `sql`, `sunrpc` |  | Allows configuration of which instrumentations should be enabled, e.g. http, grpc, sql... |
 | `prometheus_export.path` | `string` | `OTEL_EBPF_PROMETHEUS_PATH` | `/metrics` |  |  |  |
 | `prometheus_export.port` | `integer` | `OTEL_EBPF_PROMETHEUS_PORT` | `0` |  |  | 0 means disabled |
@@ -821,7 +847,7 @@ SvcMetricsConfig is equivalent to GlobalMetricsConfig, but avoids defining envir
 
 | Field | Type | Values | Description |
 |---|---|---|---|
-| `features` | `string`[] | `*`, `all`, `application`, `application_host`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `application_span` (deprecated), `application_span_sizes` (deprecated) | Specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, ... |
+| `features` | `string`[] | `*`, `all`, `application`, `application_red`, `application_runtime`, `application_service_graph`, `application_sizes`, `application_span_otel`, `ebpf`, `network`, `network_flow_packets`, `network_inter_zone`, `stats`, `stats_tcp_failed_connections`, `stats_tcp_io`, `stats_tcp_retransmits`, `stats_tcp_rtt`, `stats_tcp_successful_connections`, `application_span` (deprecated), `application_span_sizes` (deprecated) | Specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, ... |
 
 ### NumericRange
 

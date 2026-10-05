@@ -27,6 +27,7 @@ const (
 	BpfIterMapDebugEvents                = "debug_events"
 	BpfIterMapIterListeningPorts         = "iter_listening_ports"
 	BpfIterMapSockDir                    = "sock_dir"
+	BpfIterMapSocketCookie               = "socket_cookie"
 	BpfIterMapTrackedSockCookies         = "tracked_sock_cookies"
 	BpfIterProgObiSkIterTcp              = "obi_sk_iter_tcp"
 	BpfIterProgObiSkIterTcpListen        = "obi_sk_iter_tcp_listen"
@@ -37,6 +38,7 @@ const (
 	BpfIterVarG_bpfProbeWriteUserEnabled = "g_bpf_probe_write_user_enabled"
 	BpfIterVarG_bpfTraceparentEnabled    = "g_bpf_traceparent_enabled"
 	BpfIterVarG_goH2WriteFailStep        = "g_go_h2_write_fail_step"
+	BpfIterVarG_tracesCtxV1Enabled       = "g_traces_ctx_v1_enabled"
 )
 
 // LoadBpfIter returns the embedded CollectionSpec for BpfIter.
@@ -92,6 +94,7 @@ type BpfIterMapSpecs struct {
 	DebugEvents        *ebpf.MapSpec `ebpf:"debug_events"`
 	IterListeningPorts *ebpf.MapSpec `ebpf:"iter_listening_ports"`
 	SockDir            *ebpf.MapSpec `ebpf:"sock_dir"`
+	SocketCookie       *ebpf.MapSpec `ebpf:"socket_cookie"`
 	TrackedSockCookies *ebpf.MapSpec `ebpf:"tracked_sock_cookies"`
 }
 
@@ -106,6 +109,7 @@ type BpfIterVariableSpecs struct {
 	G_bpfProbeWriteUserEnabled *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
 }
 
 // BpfIterObjects contains all objects after they have been loaded into the kernel.
@@ -131,6 +135,7 @@ type BpfIterMaps struct {
 	DebugEvents        *ebpf.Map `ebpf:"debug_events"`
 	IterListeningPorts *ebpf.Map `ebpf:"iter_listening_ports"`
 	SockDir            *ebpf.Map `ebpf:"sock_dir"`
+	SocketCookie       *ebpf.Map `ebpf:"socket_cookie"`
 	TrackedSockCookies *ebpf.Map `ebpf:"tracked_sock_cookies"`
 }
 
@@ -139,6 +144,7 @@ func (m *BpfIterMaps) Close() error {
 		m.DebugEvents,
 		m.IterListeningPorts,
 		m.SockDir,
+		m.SocketCookie,
 		m.TrackedSockCookies,
 	)
 }
@@ -154,6 +160,7 @@ type BpfIterVariables struct {
 	G_bpfProbeWriteUserEnabled *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
 }
 
 // BpfIterPrograms contains all programs after they have been loaded into the kernel.

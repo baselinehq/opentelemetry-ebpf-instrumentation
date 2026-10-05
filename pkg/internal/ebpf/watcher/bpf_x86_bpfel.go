@@ -32,6 +32,7 @@ const (
 	BpfVarG_bpfProbeWriteUserEnabled = "g_bpf_probe_write_user_enabled"
 	BpfVarG_bpfTraceparentEnabled    = "g_bpf_traceparent_enabled"
 	BpfVarG_goH2WriteFailStep        = "g_go_h2_write_fail_step"
+	BpfVarG_tracesCtxV1Enabled       = "g_traces_ctx_v1_enabled"
 	BpfVarIp4ip6Prefix               = "ip4ip6_prefix"
 	BpfVarUnused2                    = "unused_2"
 )
@@ -99,6 +100,7 @@ type BpfVariableSpecs struct {
 	G_bpfProbeWriteUserEnabled *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
 	Ip4ip6Prefix               *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
 	Unused2                    *ebpf.VariableSpec `ebpf:"unused_2"`
 }
@@ -144,6 +146,7 @@ type BpfVariables struct {
 	G_bpfProbeWriteUserEnabled *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
 	Ip4ip6Prefix               *ebpf.Variable `ebpf:"ip4ip6_prefix"`
 	Unused2                    *ebpf.Variable `ebpf:"unused_2"`
 }

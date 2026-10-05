@@ -47,9 +47,9 @@ func TestMain(m *testing.M) {
 		// teardown (enforcing)
 		kube.WeaverValidation(),
 		kube.Deploy(testpath.Manifests+"/03-otelcol-weaver.yml"),
-		kube.Deploy(testpath.Manifests+"/05-uninstrumented-service.yml"),
-		kube.Deploy(testpath.Manifests+"/06-obi-netolly.yml"),
 		kube.Deploy(testpath.Manifests+"/08-weaver.yml"),
+		kube.DeployAfterWeaverReady(testpath.Manifests+"/05-uninstrumented-service.yml"),
+		kube.DeployAfterWeaverReady(testpath.Manifests+"/06-obi-netolly.yml"),
 	)
 
 	cluster.Run(m)
@@ -57,4 +57,8 @@ func TestMain(m *testing.M) {
 
 func TestNetworkFlowBytes(t *testing.T) {
 	cluster.TestEnv().Test(t, FeatureNetworkFlowBytes())
+}
+
+func TestNetworkFlowOTLPResource(t *testing.T) {
+	cluster.TestEnv().Test(t, FeatureNetworkFlowOTLPResource())
 }

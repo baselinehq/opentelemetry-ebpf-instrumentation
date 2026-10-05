@@ -361,6 +361,7 @@ extensions:
                     context_propagation: disabled
                     override_bpfloop_enabled: false
                     disable_black_box_cp: false
+                    populate_trace_context: false
                 traffic:
                     control_backend: auto
                     high_request_volume: false
@@ -419,6 +420,7 @@ extensions:
                         incoming: incoming
                 sources:
                     - k8s
+                    - ecs
                 cache:
                     size: 1024
                     ttl: 5m0s

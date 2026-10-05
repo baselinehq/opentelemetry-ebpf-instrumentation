@@ -8,6 +8,15 @@ The current configuration model has evolved organically with a focus on implemen
 This has led to structural inconsistencies, redundant controls, and a mix of user-facing and internal configuration in the same sections.
 To address this, a user-centric redesign of the configuration schema is proposed here, optimizing for common user journeys, clear ownership of concerns, and a clean separation between user-facing configuration and internal implementation details.
 
+## Configuration development policy
+
+Config v1 is frozen for backward compatibility. It does not receive bug fixes,
+new fields, or new features. All configuration changes must target Config v2,
+including its schema, validation, conversion, examples, and documentation.
+Do not extend the v1 configuration model or change its behavior to implement a
+fix. Users who need configuration fixes or new features must migrate to Config
+v2.
+
 Goals:
 
 - Define a clear, consistent configuration schema that maps directly to user intent and common use cases.
@@ -376,6 +385,13 @@ Known `match.kubernetes` fields exported today:
 `metadata_glob` and `metadata_regex` intentionally exclude `k8s_namespace`; namespace has first-class fields because it is the most common Kubernetes selector.
 Other allowed metadata keys currently include `k8s_pod_name`, `k8s_deployment_name`, `k8s_replicaset_name`, `k8s_daemonset_name`, `k8s_statefulset_name`, `k8s_job_name`, `k8s_cronjob_name`, `k8s_owner_name`, `k8s_container_name`, and `container_name`.
 
+#### Process selection caveat
+
+When a process does not match an include rule directly, it can still inherit a
+tracked parent's selection. This intentional fallback applies even if the child
+never opens a selected port, so `open_ports` does not exclude forked children.
+Use executable-path exclusions when child processes must remain uninstrumented.
+
 #### Language-detection path skips are not capture rules
 
 The v1 `discovery.excluded_linux_system_paths` field limits the cost of
@@ -546,7 +562,7 @@ This section is the primary user control for defining how OBI captures and proce
 The current shape separates packet/flow capture from TCP stats capture:
 
 - `capture.network.capture` controls network flow capture and flow-derived telemetry.
-- `capture.network.stats` controls TCP stats telemetry. `enabled` is the stats master switch, and `features` lists enabled stats families: `tcp_rtt`, `tcp_failed_connections`, `tcp_retransmits`, and `tcp_io`.
+- `capture.network.stats` controls TCP stats telemetry. `enabled` is the stats master switch, and `features` lists enabled stats families: `tcp_rtt`, `tcp_failed_connections`, `tcp_successful_connections`, `tcp_retransmits`, and `tcp_io`.
 
 `tcp_io` can produce substantially more events than the other stats families, so users should opt into it deliberately when they need per-send/per-receive I/O stats.
 
@@ -716,6 +732,7 @@ Important mapping notes:
 | `ebpf.context_propagation` | `extensions.obi.capture.engine.propagation.context_propagation` | Move |
 | `ebpf.couchbase_db_cache_size` | `extensions.obi.capture.instrumentation.couchbase.db_cache_size` | Move |
 | `ebpf.disable_black_box_cp` | `extensions.obi.capture.engine.propagation.disable_black_box_cp` | Move |
+| `ebpf.populate_trace_context` | `extensions.obi.capture.engine.propagation.populate_trace_context` | Move |
 | `ebpf.dns_request_timeout` | `extensions.obi.capture.instrumentation.dns.request_timeout` | Move |
 | `ebpf.force_bpf_map_reader` | `extensions.obi.capture.engine.traffic.force_map_reader` | Move + rename |
 | `ebpf.go_http_client_buffer_timeout` | `extensions.obi.capture.instrumentation.http.go_http_client_buffer_timeout` | Move |

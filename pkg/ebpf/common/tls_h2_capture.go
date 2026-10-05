@@ -1,27 +1,30 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
-package ebpfcommon
+package ebpfcommon // import "go.opentelemetry.io/obi/pkg/ebpf/common"
 
 import (
 	"bytes"
-	"fmt"
+	"errors"
 	"io"
 	"net"
 	"net/http"
 	"strconv"
 	"unsafe"
 
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
+
 	"go.opentelemetry.io/obi/pkg/appolly/app"
 	"go.opentelemetry.io/obi/pkg/appolly/app/request"
 	"go.opentelemetry.io/obi/pkg/ebpf/ringbuf"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/hpack"
 )
 
-const tlsH2Event = 250 // bpf/common/tls_h2_capture.h; separate from upstream events
-const h2CaptureHeaderLimit = 64 << 10
-const h2CaptureFrameLimit = 1 << 20
-const h2CaptureStreamLimit = 512
+const (
+	tlsH2Event           = 250 // bpf/common/tls_h2_capture.h; separate from upstream events
+	h2CaptureHeaderLimit = 64 << 10
+	h2CaptureFrameLimit  = 1 << 20
+	h2CaptureStreamLimit = 512
+)
 
 // Layout is asserted to be 72 bytes in both the BPF source and Go tests.
 type tlsH2Chunk struct {
@@ -70,8 +73,10 @@ type tlsH2Capture struct {
 }
 
 func newTLSH2Capture(e *tlsH2Chunk) *tlsH2Capture {
-	c := &tlsH2Capture{generation: e.Generation, conn: e.Conn, streams: make(map[uint32]*tlsH2Stream),
-		pid: request.PidInfo{HostPID: app.PID(e.HostPID), UserPID: app.PID(e.UserPID), Namespace: e.Namespace}}
+	c := &tlsH2Capture{
+		generation: e.Generation, conn: e.Conn, streams: make(map[uint32]*tlsH2Stream),
+		pid: request.PidInfo{HostPID: app.PID(e.HostPID), UserPID: app.PID(e.UserPID), Namespace: e.Namespace},
+	}
 	for i := range c.directions {
 		d := &c.directions[i]
 		d.preface = i == int(directionSend)
@@ -85,6 +90,7 @@ func newTLSH2Capture(e *tlsH2Chunk) *tlsH2Capture {
 	}
 	return c
 }
+
 func (c *tlsH2Capture) invalidate() {
 	c.bad = true
 	c.streams = nil
@@ -102,12 +108,12 @@ func readTLSH2Capture(ctx *EBPFParseContext, record *ringbuf.Record) (request.Sp
 		return request.Span{}, true, err
 	}
 	if e.Direction > 2 || uint64(size)+uint64(e.Len) != uint64(len(record.RawSample)) {
-		return request.Span{}, true, fmt.Errorf("invalid TLS HTTP2 chunk")
+		return request.Span{}, true, errors.New("invalid TLS HTTP2 chunk")
 	}
 	key := tlsH2ConnectionKey(e.HostPID, e.Conn)
 	if e.Direction == 2 {
 		if e.Len != 0 {
-			return request.Span{}, true, fmt.Errorf("invalid TLS close event")
+			return request.Span{}, true, errors.New("invalid TLS close event")
 		}
 		if c, ok := ctx.tlsH2Captures.Get(key); ok && c.generation == e.Generation {
 			ctx.tlsH2Captures.Remove(key)
@@ -167,6 +173,7 @@ func (c *tlsH2Capture) consume(ctx *EBPFParseContext, direction uint8, offset ui
 	}
 	return true
 }
+
 func (c *tlsH2Capture) frame(ctx *EBPFParseContext, direction uint8, f http2.Frame, size int64) bool {
 	d := &c.directions[direction]
 	id := f.Header().StreamID
@@ -257,6 +264,7 @@ func (c *tlsH2Capture) frame(ctx *EBPFParseContext, direction uint8, f http2.Fra
 	}
 	return true
 }
+
 func (c *tlsH2Capture) header(ctx *EBPFParseContext, direction uint8, id uint32, fragment []byte, end bool) bool {
 	d := &c.directions[direction]
 	if _, err := d.decoder.Write(fragment); err != nil || d.headerBytes > h2CaptureHeaderLimit {
@@ -312,6 +320,7 @@ func (c *tlsH2Capture) header(ctx *EBPFParseContext, direction uint8, id uint32,
 	c.complete(ctx, id, s)
 	return true
 }
+
 func (c *tlsH2Capture) complete(ctx *EBPFParseContext, id uint32, s *tlsH2Stream) {
 	if !s.request || !s.response || !s.reqEnd || !s.respEnd {
 		return

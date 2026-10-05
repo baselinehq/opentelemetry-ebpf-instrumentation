@@ -23,10 +23,11 @@ const (
 type StatsStatType uint8
 
 const (
-	StatsStatTypeK_statTypeTcpRtt              StatsStatType = 1
-	StatsStatTypeK_statTypeTcpFailedConnection StatsStatType = 2
-	StatsStatTypeK_statTypeTcpRetransmit       StatsStatType = 3
-	StatsStatTypeK_statTypeTcpIo               StatsStatType = 4
+	StatsStatTypeK_statTypeTcpRtt                  StatsStatType = 1
+	StatsStatTypeK_statTypeTcpFailedConnection     StatsStatType = 2
+	StatsStatTypeK_statTypeTcpRetransmit           StatsStatType = 3
+	StatsStatTypeK_statTypeTcpIo                   StatsStatType = 4
+	StatsStatTypeK_statTypeTcpSuccessfulConnection StatsStatType = 5
 )
 
 type StatsTcpFailReason uint8
@@ -122,39 +123,56 @@ type StatsTcpRttT struct {
 	}
 }
 
+type StatsTcpSuccessfulConnectionT struct {
+	_     structs.HostLayout
+	Flags uint8
+	Role  StatsTcpHandshakeRole
+	Pad   [2]uint8
+	Conn  struct {
+		_      structs.HostLayout
+		S_addr [16]uint8
+		D_addr [16]uint8
+		S_port uint16
+		D_port uint16
+	}
+}
+
 // Names of all BPF objects in the ELF.
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	StatsMapDebugEvents                                    = "debug_events"
-	StatsMapSockRole                                       = "sock_role"
-	StatsMapStatsEvents                                    = "stats_events"
-	StatsMapTcpIoAccum                                     = "tcp_io_accum"
-	StatsMapTcpSendmsgSock                                 = "tcp_sendmsg_sock"
-	StatsProgObiStatsKprobeTcpCleanupRbuf                  = "obi_stats_kprobe_tcp_cleanup_rbuf"
-	StatsProgObiStatsKprobeTcpCloseIoFlush                 = "obi_stats_kprobe_tcp_close_io_flush"
-	StatsProgObiStatsKprobeTcpCloseSrtt                    = "obi_stats_kprobe_tcp_close_srtt"
-	StatsProgObiStatsKprobeTcpSendmsg                      = "obi_stats_kprobe_tcp_sendmsg"
-	StatsProgObiStatsKretprobeTcpSendmsg                   = "obi_stats_kretprobe_tcp_sendmsg"
-	StatsProgObiStatsRawTpTcpRetransmitSkb                 = "obi_stats_raw_tp_tcp_retransmit_skb"
-	StatsProgObiStatsTpInetSockSetStateConnRole            = "obi_stats_tp_inet_sock_set_state_conn_role"
-	StatsProgObiStatsTpInetSockSetStateTcpFailedConnection = "obi_stats_tp_inet_sock_set_state_tcp_failed_connection"
-	StatsVarG_bpfDebug                                     = "g_bpf_debug"
-	StatsVarG_bpfHeaderPropagation                         = "g_bpf_header_propagation"
-	StatsVarG_bpfLoopEnabled                               = "g_bpf_loop_enabled"
-	StatsVarG_bpfProbeWriteUserEnabled                     = "g_bpf_probe_write_user_enabled"
-	StatsVarG_bpfTraceparentEnabled                        = "g_bpf_traceparent_enabled"
-	StatsVarG_goH2WriteFailStep                            = "g_go_h2_write_fail_step"
-	StatsVarIp4ip6Prefix                                   = "ip4ip6_prefix"
-	StatsVarStatsWakeupDataBytes                           = "stats_wakeup_data_bytes"
-	StatsVarUnused1                                        = "unused_1"
-	StatsVarUnused2                                        = "unused_2"
-	StatsVarUnused3                                        = "unused_3"
-	StatsVarUnused4                                        = "unused_4"
-	StatsVarUnusedTcpFailedConnection                      = "unused_tcp_failed_connection"
-	StatsVarUnusedTcpIo                                    = "unused_tcp_io"
-	StatsVarUnusedTcpRetransmitT                           = "unused_tcp_retransmit_t"
-	StatsVarUnusedTcpRtt                                   = "unused_tcp_rtt"
+	StatsMapDebugEvents                                        = "debug_events"
+	StatsMapSockRole                                           = "sock_role"
+	StatsMapStatsEvents                                        = "stats_events"
+	StatsMapTcpIoAccum                                         = "tcp_io_accum"
+	StatsMapTcpSendmsgSock                                     = "tcp_sendmsg_sock"
+	StatsProgObiStatsKprobeTcpCleanupRbuf                      = "obi_stats_kprobe_tcp_cleanup_rbuf"
+	StatsProgObiStatsKprobeTcpCloseIoFlush                     = "obi_stats_kprobe_tcp_close_io_flush"
+	StatsProgObiStatsKprobeTcpCloseSrtt                        = "obi_stats_kprobe_tcp_close_srtt"
+	StatsProgObiStatsKprobeTcpSendmsg                          = "obi_stats_kprobe_tcp_sendmsg"
+	StatsProgObiStatsKretprobeTcpSendmsg                       = "obi_stats_kretprobe_tcp_sendmsg"
+	StatsProgObiStatsRawTpTcpRetransmitSkb                     = "obi_stats_raw_tp_tcp_retransmit_skb"
+	StatsProgObiStatsTpInetSockSetStateConnRole                = "obi_stats_tp_inet_sock_set_state_conn_role"
+	StatsProgObiStatsTpInetSockSetStateTcpFailedConnection     = "obi_stats_tp_inet_sock_set_state_tcp_failed_connection"
+	StatsProgObiStatsTpInetSockSetStateTcpSuccessfulConnection = "obi_stats_tp_inet_sock_set_state_tcp_successful_connection"
+	StatsVarG_bpfDebug                                         = "g_bpf_debug"
+	StatsVarG_bpfHeaderPropagation                             = "g_bpf_header_propagation"
+	StatsVarG_bpfLoopEnabled                                   = "g_bpf_loop_enabled"
+	StatsVarG_bpfProbeWriteUserEnabled                         = "g_bpf_probe_write_user_enabled"
+	StatsVarG_bpfTraceparentEnabled                            = "g_bpf_traceparent_enabled"
+	StatsVarG_goH2WriteFailStep                                = "g_go_h2_write_fail_step"
+	StatsVarG_tracesCtxV1Enabled                               = "g_traces_ctx_v1_enabled"
+	StatsVarIp4ip6Prefix                                       = "ip4ip6_prefix"
+	StatsVarStatsWakeupDataBytes                               = "stats_wakeup_data_bytes"
+	StatsVarUnused1                                            = "unused_1"
+	StatsVarUnused2                                            = "unused_2"
+	StatsVarUnused3                                            = "unused_3"
+	StatsVarUnused4                                            = "unused_4"
+	StatsVarUnusedTcpFailedConnection                          = "unused_tcp_failed_connection"
+	StatsVarUnusedTcpIo                                        = "unused_tcp_io"
+	StatsVarUnusedTcpRetransmitT                               = "unused_tcp_retransmit_t"
+	StatsVarUnusedTcpRtt                                       = "unused_tcp_rtt"
+	StatsVarUnusedTcpSuccessfulConnection                      = "unused_tcp_successful_connection"
 )
 
 // LoadStats returns the embedded CollectionSpec for Stats.
@@ -199,14 +217,15 @@ type StatsSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type StatsProgramSpecs struct {
-	ObiStatsKprobeTcpCleanupRbuf                  *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_cleanup_rbuf"`
-	ObiStatsKprobeTcpCloseIoFlush                 *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_close_io_flush"`
-	ObiStatsKprobeTcpCloseSrtt                    *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_close_srtt"`
-	ObiStatsKprobeTcpSendmsg                      *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_sendmsg"`
-	ObiStatsKretprobeTcpSendmsg                   *ebpf.ProgramSpec `ebpf:"obi_stats_kretprobe_tcp_sendmsg"`
-	ObiStatsRawTpTcpRetransmitSkb                 *ebpf.ProgramSpec `ebpf:"obi_stats_raw_tp_tcp_retransmit_skb"`
-	ObiStatsTpInetSockSetStateConnRole            *ebpf.ProgramSpec `ebpf:"obi_stats_tp_inet_sock_set_state_conn_role"`
-	ObiStatsTpInetSockSetStateTcpFailedConnection *ebpf.ProgramSpec `ebpf:"obi_stats_tp_inet_sock_set_state_tcp_failed_connection"`
+	ObiStatsKprobeTcpCleanupRbuf                      *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_cleanup_rbuf"`
+	ObiStatsKprobeTcpCloseIoFlush                     *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_close_io_flush"`
+	ObiStatsKprobeTcpCloseSrtt                        *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_close_srtt"`
+	ObiStatsKprobeTcpSendmsg                          *ebpf.ProgramSpec `ebpf:"obi_stats_kprobe_tcp_sendmsg"`
+	ObiStatsKretprobeTcpSendmsg                       *ebpf.ProgramSpec `ebpf:"obi_stats_kretprobe_tcp_sendmsg"`
+	ObiStatsRawTpTcpRetransmitSkb                     *ebpf.ProgramSpec `ebpf:"obi_stats_raw_tp_tcp_retransmit_skb"`
+	ObiStatsTpInetSockSetStateConnRole                *ebpf.ProgramSpec `ebpf:"obi_stats_tp_inet_sock_set_state_conn_role"`
+	ObiStatsTpInetSockSetStateTcpFailedConnection     *ebpf.ProgramSpec `ebpf:"obi_stats_tp_inet_sock_set_state_tcp_failed_connection"`
+	ObiStatsTpInetSockSetStateTcpSuccessfulConnection *ebpf.ProgramSpec `ebpf:"obi_stats_tp_inet_sock_set_state_tcp_successful_connection"`
 }
 
 // StatsMapSpecs contains maps before they are loaded into the kernel.
@@ -224,22 +243,24 @@ type StatsMapSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type StatsVariableSpecs struct {
-	G_bpfDebug                 *ebpf.VariableSpec `ebpf:"g_bpf_debug"`
-	G_bpfHeaderPropagation     *ebpf.VariableSpec `ebpf:"g_bpf_header_propagation"`
-	G_bpfLoopEnabled           *ebpf.VariableSpec `ebpf:"g_bpf_loop_enabled"`
-	G_bpfProbeWriteUserEnabled *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
-	G_bpfTraceparentEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
-	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
-	Ip4ip6Prefix               *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
-	StatsWakeupDataBytes       *ebpf.VariableSpec `ebpf:"stats_wakeup_data_bytes"`
-	Unused1                    *ebpf.VariableSpec `ebpf:"unused_1"`
-	Unused2                    *ebpf.VariableSpec `ebpf:"unused_2"`
-	Unused3                    *ebpf.VariableSpec `ebpf:"unused_3"`
-	Unused4                    *ebpf.VariableSpec `ebpf:"unused_4"`
-	UnusedTcpFailedConnection  *ebpf.VariableSpec `ebpf:"unused_tcp_failed_connection"`
-	UnusedTcpIo                *ebpf.VariableSpec `ebpf:"unused_tcp_io"`
-	UnusedTcpRetransmitT       *ebpf.VariableSpec `ebpf:"unused_tcp_retransmit_t"`
-	UnusedTcpRtt               *ebpf.VariableSpec `ebpf:"unused_tcp_rtt"`
+	G_bpfDebug                    *ebpf.VariableSpec `ebpf:"g_bpf_debug"`
+	G_bpfHeaderPropagation        *ebpf.VariableSpec `ebpf:"g_bpf_header_propagation"`
+	G_bpfLoopEnabled              *ebpf.VariableSpec `ebpf:"g_bpf_loop_enabled"`
+	G_bpfProbeWriteUserEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
+	G_bpfTraceparentEnabled       *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
+	G_goH2WriteFailStep           *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled          *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
+	Ip4ip6Prefix                  *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
+	StatsWakeupDataBytes          *ebpf.VariableSpec `ebpf:"stats_wakeup_data_bytes"`
+	Unused1                       *ebpf.VariableSpec `ebpf:"unused_1"`
+	Unused2                       *ebpf.VariableSpec `ebpf:"unused_2"`
+	Unused3                       *ebpf.VariableSpec `ebpf:"unused_3"`
+	Unused4                       *ebpf.VariableSpec `ebpf:"unused_4"`
+	UnusedTcpFailedConnection     *ebpf.VariableSpec `ebpf:"unused_tcp_failed_connection"`
+	UnusedTcpIo                   *ebpf.VariableSpec `ebpf:"unused_tcp_io"`
+	UnusedTcpRetransmitT          *ebpf.VariableSpec `ebpf:"unused_tcp_retransmit_t"`
+	UnusedTcpRtt                  *ebpf.VariableSpec `ebpf:"unused_tcp_rtt"`
+	UnusedTcpSuccessfulConnection *ebpf.VariableSpec `ebpf:"unused_tcp_successful_connection"`
 }
 
 // StatsObjects contains all objects after they have been loaded into the kernel.
@@ -283,36 +304,39 @@ func (m *StatsMaps) Close() error {
 //
 // It can be passed to LoadStatsObjects or ebpf.CollectionSpec.LoadAndAssign.
 type StatsVariables struct {
-	G_bpfDebug                 *ebpf.Variable `ebpf:"g_bpf_debug"`
-	G_bpfHeaderPropagation     *ebpf.Variable `ebpf:"g_bpf_header_propagation"`
-	G_bpfLoopEnabled           *ebpf.Variable `ebpf:"g_bpf_loop_enabled"`
-	G_bpfProbeWriteUserEnabled *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
-	G_bpfTraceparentEnabled    *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
-	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
-	Ip4ip6Prefix               *ebpf.Variable `ebpf:"ip4ip6_prefix"`
-	StatsWakeupDataBytes       *ebpf.Variable `ebpf:"stats_wakeup_data_bytes"`
-	Unused1                    *ebpf.Variable `ebpf:"unused_1"`
-	Unused2                    *ebpf.Variable `ebpf:"unused_2"`
-	Unused3                    *ebpf.Variable `ebpf:"unused_3"`
-	Unused4                    *ebpf.Variable `ebpf:"unused_4"`
-	UnusedTcpFailedConnection  *ebpf.Variable `ebpf:"unused_tcp_failed_connection"`
-	UnusedTcpIo                *ebpf.Variable `ebpf:"unused_tcp_io"`
-	UnusedTcpRetransmitT       *ebpf.Variable `ebpf:"unused_tcp_retransmit_t"`
-	UnusedTcpRtt               *ebpf.Variable `ebpf:"unused_tcp_rtt"`
+	G_bpfDebug                    *ebpf.Variable `ebpf:"g_bpf_debug"`
+	G_bpfHeaderPropagation        *ebpf.Variable `ebpf:"g_bpf_header_propagation"`
+	G_bpfLoopEnabled              *ebpf.Variable `ebpf:"g_bpf_loop_enabled"`
+	G_bpfProbeWriteUserEnabled    *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
+	G_bpfTraceparentEnabled       *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
+	G_goH2WriteFailStep           *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled          *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
+	Ip4ip6Prefix                  *ebpf.Variable `ebpf:"ip4ip6_prefix"`
+	StatsWakeupDataBytes          *ebpf.Variable `ebpf:"stats_wakeup_data_bytes"`
+	Unused1                       *ebpf.Variable `ebpf:"unused_1"`
+	Unused2                       *ebpf.Variable `ebpf:"unused_2"`
+	Unused3                       *ebpf.Variable `ebpf:"unused_3"`
+	Unused4                       *ebpf.Variable `ebpf:"unused_4"`
+	UnusedTcpFailedConnection     *ebpf.Variable `ebpf:"unused_tcp_failed_connection"`
+	UnusedTcpIo                   *ebpf.Variable `ebpf:"unused_tcp_io"`
+	UnusedTcpRetransmitT          *ebpf.Variable `ebpf:"unused_tcp_retransmit_t"`
+	UnusedTcpRtt                  *ebpf.Variable `ebpf:"unused_tcp_rtt"`
+	UnusedTcpSuccessfulConnection *ebpf.Variable `ebpf:"unused_tcp_successful_connection"`
 }
 
 // StatsPrograms contains all programs after they have been loaded into the kernel.
 //
 // It can be passed to LoadStatsObjects or ebpf.CollectionSpec.LoadAndAssign.
 type StatsPrograms struct {
-	ObiStatsKprobeTcpCleanupRbuf                  *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_cleanup_rbuf"`
-	ObiStatsKprobeTcpCloseIoFlush                 *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_close_io_flush"`
-	ObiStatsKprobeTcpCloseSrtt                    *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_close_srtt"`
-	ObiStatsKprobeTcpSendmsg                      *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_sendmsg"`
-	ObiStatsKretprobeTcpSendmsg                   *ebpf.Program `ebpf:"obi_stats_kretprobe_tcp_sendmsg"`
-	ObiStatsRawTpTcpRetransmitSkb                 *ebpf.Program `ebpf:"obi_stats_raw_tp_tcp_retransmit_skb"`
-	ObiStatsTpInetSockSetStateConnRole            *ebpf.Program `ebpf:"obi_stats_tp_inet_sock_set_state_conn_role"`
-	ObiStatsTpInetSockSetStateTcpFailedConnection *ebpf.Program `ebpf:"obi_stats_tp_inet_sock_set_state_tcp_failed_connection"`
+	ObiStatsKprobeTcpCleanupRbuf                      *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_cleanup_rbuf"`
+	ObiStatsKprobeTcpCloseIoFlush                     *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_close_io_flush"`
+	ObiStatsKprobeTcpCloseSrtt                        *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_close_srtt"`
+	ObiStatsKprobeTcpSendmsg                          *ebpf.Program `ebpf:"obi_stats_kprobe_tcp_sendmsg"`
+	ObiStatsKretprobeTcpSendmsg                       *ebpf.Program `ebpf:"obi_stats_kretprobe_tcp_sendmsg"`
+	ObiStatsRawTpTcpRetransmitSkb                     *ebpf.Program `ebpf:"obi_stats_raw_tp_tcp_retransmit_skb"`
+	ObiStatsTpInetSockSetStateConnRole                *ebpf.Program `ebpf:"obi_stats_tp_inet_sock_set_state_conn_role"`
+	ObiStatsTpInetSockSetStateTcpFailedConnection     *ebpf.Program `ebpf:"obi_stats_tp_inet_sock_set_state_tcp_failed_connection"`
+	ObiStatsTpInetSockSetStateTcpSuccessfulConnection *ebpf.Program `ebpf:"obi_stats_tp_inet_sock_set_state_tcp_successful_connection"`
 }
 
 func (p *StatsPrograms) Close() error {
@@ -325,6 +349,7 @@ func (p *StatsPrograms) Close() error {
 		p.ObiStatsRawTpTcpRetransmitSkb,
 		p.ObiStatsTpInetSockSetStateConnRole,
 		p.ObiStatsTpInetSockSetStateTcpFailedConnection,
+		p.ObiStatsTpInetSockSetStateTcpSuccessfulConnection,
 	)
 }
 

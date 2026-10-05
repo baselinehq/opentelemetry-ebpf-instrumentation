@@ -1,6 +1,8 @@
 // Copyright The OpenTelemetry Authors
 // SPDX-License-Identifier: Apache-2.0
 
+//go:build linux
+
 package uprobe
 
 import (
@@ -59,6 +61,17 @@ func TestMarkMultiProgramsMarksUprobePrograms(t *testing.T) {
 	assert.Equal(t, ebpf.AttachTraceUprobeMulti, spec.Programs["ret"].AttachType)
 	assert.Equal(t, ebpf.AttachNone, spec.Programs["kprobe"].AttachType)
 	assert.Equal(t, ebpf.AttachNone, spec.Programs["sockops"].AttachType)
+}
+
+func TestPrepareSpecsLeavesUprobesOnLegacyPathWhenMultiIsDisabled(t *testing.T) {
+	ConfigureMulti(true)
+	t.Cleanup(func() { ConfigureMulti(false) })
+	spec := uprobeTestSpec()
+
+	PrepareSpecs(spec)
+
+	assert.Equal(t, ebpf.AttachNone, spec.Programs["entry"].AttachType)
+	assert.Equal(t, ebpf.AttachNone, spec.Programs["ret"].AttachType)
 }
 
 func TestMarkMultiProgramsGivesMultiProgramsTheirOwnTailCallTable(t *testing.T) {

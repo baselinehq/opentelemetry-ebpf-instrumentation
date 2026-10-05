@@ -21,7 +21,8 @@ type BpfLogEventT struct {
 	Fd       uint32
 	Dev      uint32
 	Ctx      BpfObiCtxInfoT
-	FilePath [64]uint8
+	DestKind uint8
+	Pad      [7]uint8
 	Log      [0]uint8
 }
 
@@ -46,7 +47,6 @@ const (
 	BpfMapLogEventStorage            = "log_event_storage"
 	BpfMapLogEvents                  = "log_events"
 	BpfMapLogPipes                   = "log_pipes"
-	BpfMapPathResolverScratch        = "path_resolver_scratch"
 	BpfMapPidFd                      = "pid_fd"
 	BpfMapTracesCtxV1                = "traces_ctx_v1"
 	BpfMapZeros                      = "zeros"
@@ -60,6 +60,7 @@ const (
 	BpfVarG_bpfProbeWriteUserEnabled = "g_bpf_probe_write_user_enabled"
 	BpfVarG_bpfTraceparentEnabled    = "g_bpf_traceparent_enabled"
 	BpfVarG_goH2WriteFailStep        = "g_go_h2_write_fail_step"
+	BpfVarG_tracesCtxV1Enabled       = "g_traces_ctx_v1_enabled"
 	BpfVarLogEventUnused             = "log_event__unused"
 	BpfVarLogPipeKeyUnused           = "log_pipe_key__unused"
 )
@@ -116,15 +117,14 @@ type BpfProgramSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type BpfMapSpecs struct {
-	DebugEvents         *ebpf.MapSpec `ebpf:"debug_events"`
-	LogEnricherPids     *ebpf.MapSpec `ebpf:"log_enricher_pids"`
-	LogEventStorage     *ebpf.MapSpec `ebpf:"log_event_storage"`
-	LogEvents           *ebpf.MapSpec `ebpf:"log_events"`
-	LogPipes            *ebpf.MapSpec `ebpf:"log_pipes"`
-	PathResolverScratch *ebpf.MapSpec `ebpf:"path_resolver_scratch"`
-	PidFd               *ebpf.MapSpec `ebpf:"pid_fd"`
-	TracesCtxV1         *ebpf.MapSpec `ebpf:"traces_ctx_v1"`
-	Zeros               *ebpf.MapSpec `ebpf:"zeros"`
+	DebugEvents     *ebpf.MapSpec `ebpf:"debug_events"`
+	LogEnricherPids *ebpf.MapSpec `ebpf:"log_enricher_pids"`
+	LogEventStorage *ebpf.MapSpec `ebpf:"log_event_storage"`
+	LogEvents       *ebpf.MapSpec `ebpf:"log_events"`
+	LogPipes        *ebpf.MapSpec `ebpf:"log_pipes"`
+	PidFd           *ebpf.MapSpec `ebpf:"pid_fd"`
+	TracesCtxV1     *ebpf.MapSpec `ebpf:"traces_ctx_v1"`
+	Zeros           *ebpf.MapSpec `ebpf:"zeros"`
 }
 
 // BpfVariableSpecs contains global variables before they are loaded into the kernel.
@@ -137,6 +137,7 @@ type BpfVariableSpecs struct {
 	G_bpfProbeWriteUserEnabled *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
 	LogEventUnused             *ebpf.VariableSpec `ebpf:"log_event__unused"`
 	LogPipeKeyUnused           *ebpf.VariableSpec `ebpf:"log_pipe_key__unused"`
 }
@@ -161,15 +162,14 @@ func (o *BpfObjects) Close() error {
 //
 // It can be passed to LoadBpfObjects or ebpf.CollectionSpec.LoadAndAssign.
 type BpfMaps struct {
-	DebugEvents         *ebpf.Map `ebpf:"debug_events"`
-	LogEnricherPids     *ebpf.Map `ebpf:"log_enricher_pids"`
-	LogEventStorage     *ebpf.Map `ebpf:"log_event_storage"`
-	LogEvents           *ebpf.Map `ebpf:"log_events"`
-	LogPipes            *ebpf.Map `ebpf:"log_pipes"`
-	PathResolverScratch *ebpf.Map `ebpf:"path_resolver_scratch"`
-	PidFd               *ebpf.Map `ebpf:"pid_fd"`
-	TracesCtxV1         *ebpf.Map `ebpf:"traces_ctx_v1"`
-	Zeros               *ebpf.Map `ebpf:"zeros"`
+	DebugEvents     *ebpf.Map `ebpf:"debug_events"`
+	LogEnricherPids *ebpf.Map `ebpf:"log_enricher_pids"`
+	LogEventStorage *ebpf.Map `ebpf:"log_event_storage"`
+	LogEvents       *ebpf.Map `ebpf:"log_events"`
+	LogPipes        *ebpf.Map `ebpf:"log_pipes"`
+	PidFd           *ebpf.Map `ebpf:"pid_fd"`
+	TracesCtxV1     *ebpf.Map `ebpf:"traces_ctx_v1"`
+	Zeros           *ebpf.Map `ebpf:"zeros"`
 }
 
 func (m *BpfMaps) Close() error {
@@ -179,7 +179,6 @@ func (m *BpfMaps) Close() error {
 		m.LogEventStorage,
 		m.LogEvents,
 		m.LogPipes,
-		m.PathResolverScratch,
 		m.PidFd,
 		m.TracesCtxV1,
 		m.Zeros,
@@ -196,6 +195,7 @@ type BpfVariables struct {
 	G_bpfProbeWriteUserEnabled *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
 	LogEventUnused             *ebpf.Variable `ebpf:"log_event__unused"`
 	LogPipeKeyUnused           *ebpf.Variable `ebpf:"log_pipe_key__unused"`
 }

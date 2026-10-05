@@ -12,7 +12,6 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"go.opentelemetry.io/obi/pkg/appolly/meta"
 	"go.opentelemetry.io/obi/pkg/docker"
 	"go.opentelemetry.io/obi/pkg/export/attributes"
 	"go.opentelemetry.io/obi/pkg/export/connector"
@@ -22,6 +21,7 @@ import (
 	"go.opentelemetry.io/obi/pkg/health"
 	"go.opentelemetry.io/obi/pkg/internal/appolly"
 	"go.opentelemetry.io/obi/pkg/kube"
+	"go.opentelemetry.io/obi/pkg/metadata"
 	netagent "go.opentelemetry.io/obi/pkg/netolly/agent"
 	"go.opentelemetry.io/obi/pkg/netolly/flowdef"
 	"go.opentelemetry.io/obi/pkg/obi"
@@ -63,11 +63,12 @@ func RunWithContextInfo(
 		opt(ctxInfo)
 	}
 
-	// Enable App O11y when config enables it or when the caller passed a dynamic PID selector
+	// Enable App O11y when config enables it or when the caller passed a dynamic selector
+	// (which can select by PID and/or Kubernetes workload).
 	// (allows an "empty" instrumenter that only instruments PIDs added via the selector).
-	app := cfg.Enabled(obi.FeatureAppO11y) || ctxInfo.DynamicPIDSelector != nil
-	net := cfg.Enabled(obi.FeatureNetO11y) || ctxInfo.DynamicPIDSelector != nil
-	stats := cfg.Enabled(obi.FeatureStatsO11y) || ctxInfo.DynamicPIDSelector != nil
+	app := cfg.Enabled(obi.FeatureAppO11y) || ctxInfo.DynamicSelector != nil
+	net := cfg.Enabled(obi.FeatureNetO11y) || ctxInfo.DynamicSelector != nil
+	stats := cfg.Enabled(obi.FeatureStatsO11y) || ctxInfo.DynamicSelector != nil
 
 	// if one of nodes fail, the other should stop
 	g, ctx := errgroup.WithContext(ctx)
@@ -237,7 +238,7 @@ func BuildCommonContextInfo(
 		ServiceNameTemplate:      templ,
 	}, imetrics.NoopReporter{})
 
-	ctxInfo.NodeMeta = meta.NewNodeMeta(
+	ctxInfo.NodeMeta = metadata.NewNodeMeta(
 		ctx,
 		config.Attributes.HostID.Override,
 		ctxInfo.K8sInformer,

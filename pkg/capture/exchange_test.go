@@ -14,9 +14,11 @@ import (
 )
 
 func TestExchangePreservesIdentityHeadersAndMeasuredBytes(t *testing.T) {
-	s := request.Span{Type: request.EventTypeHTTPClient, Peer: "10.0.0.1", Host: "10.0.0.2", HostPort: 443,
+	s := request.Span{
+		Type: request.EventTypeHTTPClient, Peer: "10.0.0.1", Host: "10.0.0.2", HostPort: 443,
 		RequestHeaders:      map[string][]string{"x-example-owner": {"team"}},
-		RequestMessageBytes: 215, ResponseMessageBytes: 245, ContentLength: 32, ResponseLength: 64}
+		RequestMessageBytes: 215, ResponseMessageBytes: 245, ContentLength: 32, ResponseLength: 64,
+	}
 	s.Pid.HostPID = 42
 	got := exchangeFromSpan(&s)
 	if !got.Client || got.HostPID != 42 || got.SrcIP != s.Peer || got.DstIP != s.Host || got.DstPort != 443 ||

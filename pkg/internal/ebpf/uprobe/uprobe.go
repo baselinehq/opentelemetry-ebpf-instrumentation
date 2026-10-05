@@ -13,16 +13,31 @@ import (
 	"math"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/cilium/ebpf"
 	"github.com/cilium/ebpf/asm"
 	"github.com/cilium/ebpf/features"
 	"github.com/cilium/ebpf/link"
 	"golang.org/x/sys/unix"
+
+	"go.opentelemetry.io/obi/pkg/internal/ebpf/tracefs"
 )
 
-// one decision shared by load-time attach types and attach-time links
-var multiSupported = sync.OnceValue(func() bool {
+var multiDisabled atomic.Bool
+
+// ConfigureMulti disables uprobe_multi for subsequent loads and attachments. It's meant
+// for testing only.
+func ConfigureMulti(disabled bool) {
+	multiDisabled.Store(disabled)
+}
+
+func multiSupported() bool {
+	return !multiDisabled.Load() && kernelSupportsMulti()
+}
+
+// one kernel decision shared by load-time attach types and attach-time links
+var kernelSupportsMulti = sync.OnceValue(func() bool {
 	if err := features.HaveBPFLinkUprobeMulti(); err != nil {
 		slog.Info("attaching uprobes as perf events, the kernel has no uprobe_multi links", "reason", err)
 		return false
@@ -210,13 +225,14 @@ type Options struct {
 	Return       bool
 }
 
-// Attach uses one uprobe_multi link, or perf events where the kernel refuses it with EINVAL
-func Attach(exe *link.Executable, prog *ebpf.Program, opts Options) (io.Closer, error) {
+// Attach uses one uprobe_multi link, or perf events where the kernel refuses it with EINVAL.
+// A perf uprobe denied with EACCES is retried through tracefs.
+func Attach(exe *link.Executable, path string, prog *ebpf.Program, opts Options) (io.Closer, error) {
 	if len(opts.Addresses) == 0 {
 		return nil, errors.New("attaching uprobe: no addresses")
 	}
 	if !multiSupported() {
-		return attachPerfEvents(exe, prog, opts)
+		return attachLegacy(exe, path, prog, opts)
 	}
 	closer, multiErr := attachMulti(exe, prog, opts)
 	if multiErr == nil {
@@ -225,7 +241,7 @@ func Attach(exe *link.Executable, prog *ebpf.Program, opts Options) (io.Closer, 
 	if !errors.Is(multiErr, unix.EINVAL) {
 		return nil, multiErr
 	}
-	closer, err := attachPerfEvents(exe, prog, opts)
+	closer, err := attachLegacy(exe, path, prog, opts)
 	if err != nil {
 		return nil, errors.Join(multiErr, err)
 	}
@@ -249,6 +265,13 @@ func multiOptions(opts Options) *link.UprobeMultiOptions {
 		}
 	}
 	return multiOpts
+}
+
+func attachLegacy(exe *link.Executable, path string, prog *ebpf.Program, opts Options) (io.Closer, error) {
+	return tracefs.WithFallback(tracefs.Uprobe,
+		func() (io.Closer, error) { return attachPerfEvents(exe, prog, opts) },
+		func() (io.Closer, error) { return attachTraceFS(path, prog, opts) },
+	)
 }
 
 func attachPerfEvents(exe *link.Executable, prog *ebpf.Program, opts Options) (io.Closer, error) {

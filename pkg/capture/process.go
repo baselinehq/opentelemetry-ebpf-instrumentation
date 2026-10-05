@@ -3,7 +3,7 @@
 
 //go:build linux
 
-package capture
+package capture // import "go.opentelemetry.io/obi/pkg/capture"
 
 import (
 	"os"

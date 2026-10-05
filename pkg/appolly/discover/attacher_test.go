@@ -86,6 +86,7 @@ func (r *recordingTracer) ProcessBinary(*execpkg.FileInfo)                      
 func (r *recordingTracer) Required() bool                                         { return false }
 func (r *recordingTracer) SetEventContext(*ebpfcommon.EBPFEventContext)           {}
 func (r *recordingTracer) Capabilities() ebpfcommon.TracerCapability              { return 0 }
+func (r *recordingTracer) Close() error                                           { return nil }
 func (r *recordingTracer) Run(context.Context, *ebpfcommon.EBPFEventContext, *msg.Queue[[]request.Span]) {
 }
 
@@ -162,7 +163,7 @@ func TestSyntheticDeletePath_TraceAttacherDeletesTracer(t *testing.T) {
 	tracer := &ebpf.ProcessTracer{Type: ebpf.Generic, Programs: []ebpf.Tracer{prog}}
 	key := executableKey(fileInfo)
 	ta.existingTracers[key] = executableTracer{tracer: tracer, generation: 1}
-	ta.processInstances.Inc(key)
+	ta.processInstances.Put(key, 42, struct{}{})
 
 	go run(ctx)
 
@@ -223,8 +224,8 @@ func TestSyntheticDeletePath_TraceAttacherDeletesInstance(t *testing.T) {
 	tracer := &ebpf.ProcessTracer{Type: ebpf.Generic, Programs: []ebpf.Tracer{prog}}
 	key := executableKey(fileInfo)
 	ta.existingTracers[key] = executableTracer{tracer: tracer, generation: 1}
-	ta.processInstances.Inc(key)
-	ta.processInstances.Inc(key)
+	ta.processInstances.Put(key, 42, struct{}{})
+	ta.processInstances.Put(key, 43, struct{}{})
 
 	go run(ctx)
 

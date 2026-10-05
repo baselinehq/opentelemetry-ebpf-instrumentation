@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/obi/pkg/ebpf"
 	ebpfcommon "go.opentelemetry.io/obi/pkg/ebpf/common"
 	"go.opentelemetry.io/obi/pkg/export/imetrics"
+	"go.opentelemetry.io/obi/pkg/internal/ebpf/tracefs"
 	msg2 "go.opentelemetry.io/obi/pkg/internal/helpers/msg"
 	"go.opentelemetry.io/obi/pkg/obi"
 	"go.opentelemetry.io/obi/pkg/pipe/global"
@@ -55,9 +56,9 @@ type Instrumenter struct {
 
 	runtimeMetrics *msg.Queue[[]runtimemetrics.RuntimeMetricSnapshot]
 
-	// dynamicPIDSelector is the runtime PID set; from WithDynamicPIDSelector or created in New. Finder preloads from config.
-	dynamicPIDSelector *discover.DynamicPIDSelector
-	finishers          []finisher
+	// dynamicSelector is the runtime PID set; from WithDynamicSelector or created in New. Finder preloads from config.
+	dynamicSelector *discover.DynamicSelector
+	finishers       []finisher
 }
 
 type finisher struct {
@@ -97,15 +98,20 @@ func New(ctx context.Context, ctxInfo *global.ContextInfo, config *obi.Config) (
 		processEventsDockerDecorated,
 	), swarm.WithID("DockerProcessEventDecorator"))
 
+	processEventsECSDecorated := msg2.QueueFromConfig[exec.ProcessEvent](config, ctxInfo.Metrics, "processEventsECSDecorated")
+	swi.Add(transform.ECSProcessEventDecoratorProvider(
+		ctxInfo, processEventsDockerDecorated, processEventsECSDecorated,
+	), swarm.WithID("ECSProcessEventDecorator"))
+
 	runtimeMetrics := newRuntimeMetricsQueue(config, ctxInfo.Metrics)
 	ebpfEventContext := ebpfcommon.NewEBPFEventContext()
 
-	bp, err := appolly.Build(ctx, config, ctxInfo, tracesInput, processEventsDockerDecorated, runtimeMetrics)
+	bp, err := appolly.Build(ctx, config, ctxInfo, tracesInput, processEventsECSDecorated, runtimeMetrics)
 	if err != nil {
 		return nil, fmt.Errorf("can't instantiate instrumentation pipeline: %w", err)
 	}
 
-	sel, _ := ctxInfo.DynamicPIDSelector.(*discover.DynamicPIDSelector)
+	sel, _ := ctxInfo.DynamicSelector.(*discover.DynamicSelector)
 	// When sel is nil, finder gets nil: config target_pids are used as static criteria (FindingCriteria(cfg, false)).
 	if sel != nil {
 		sel.SetOnFileInfoUpdated(func(fi *exec.FileInfo) {
@@ -113,16 +119,16 @@ func New(ctx context.Context, ctxInfo *global.ContextInfo, config *obi.Config) (
 		})
 	}
 	instr := &Instrumenter{
-		config:             config,
-		ctxInfo:            ctxInfo,
-		tracersWg:          &sync.WaitGroup{},
-		tracesInput:        tracesInput,
-		processEventInput:  processEventsInput,
-		bp:                 bp,
-		peGraphBuilder:     swi,
-		ebpfEventContext:   ebpfEventContext,
-		runtimeMetrics:     runtimeMetrics,
-		dynamicPIDSelector: sel,
+		config:            config,
+		ctxInfo:           ctxInfo,
+		tracersWg:         &sync.WaitGroup{},
+		tracesInput:       tracesInput,
+		processEventInput: processEventsInput,
+		bp:                bp,
+		peGraphBuilder:    swi,
+		ebpfEventContext:  ebpfEventContext,
+		runtimeMetrics:    runtimeMetrics,
+		dynamicSelector:   sel,
 	}
 	return instr, nil
 }
@@ -147,7 +153,7 @@ func newRuntimeMetricsQueue(config *obi.Config, metrics imetrics.Reporter) *msg.
 func (i *Instrumenter) FindAndInstrument(ctx context.Context) error {
 	finder := discover.NewProcessFinder(i.config, i.ctxInfo, i.tracesInput, i.runtimeMetrics, i.ebpfEventContext)
 	opts := []discover.ProcessFinderStartOpt{
-		discover.WithDynamicPIDSelector(i.dynamicPIDSelector),
+		discover.WithDynamicSelector(i.dynamicSelector),
 	}
 	processEvents, err := finder.Start(ctx, opts...)
 	if err != nil {
@@ -175,7 +181,7 @@ func (i *Instrumenter) FindAndInstrument(ctx context.Context) error {
 }
 
 func (i *Instrumenter) WaitUntilFinished() error {
-	shutDownTimeout := time.After(i.config.ShutdownTimeout)
+	shutDownTimeout := time.After(tracefs.EffectiveShutdownTimeout(i.config.ShutdownTimeout))
 	for _, f := range i.finishers {
 		select {
 		case <-shutDownTimeout:
@@ -254,7 +260,7 @@ func (i *Instrumenter) stop() error {
 	}()
 
 	select {
-	case <-time.After(i.config.ShutdownTimeout):
+	case <-time.After(tracefs.EffectiveShutdownTimeout(i.config.ShutdownTimeout)):
 		return errShutdownTimeout
 	case <-stopped:
 		return nil

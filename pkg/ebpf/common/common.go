@@ -182,9 +182,14 @@ type GoProbe struct {
 
 // GoProbeGroup is an optional set of Go probes that must be attached atomically.
 type GoProbeGroup struct {
-	Name          string
-	Prerequisites []string
-	Probes        []GoProbe
+	Name string
+	// RequiresAll requires every listed baseline symbol to have been attached.
+	RequiresAll []string
+	// RequiresAny requires at least one listed baseline symbol to have been attached when non-empty.
+	RequiresAny []string
+	// ConflictsAny rejects a symbol copy when an earlier group attached any listed symbol in that copy.
+	ConflictsAny []string
+	Probes       []GoProbe
 }
 
 type USDTSpecManager struct {
@@ -313,6 +318,7 @@ type pendingGoHTTPClientRequest struct {
 type pendingGoHTTPClientKey struct {
 	conn    BpfConnectionInfoT
 	traceID trace.TraceID
+	spanID  trace.SpanID
 }
 
 type EBPFParseContext struct {
@@ -330,6 +336,7 @@ type EBPFParseContext struct {
 	postgresDBNames             *simplelru.LRU[BpfConnectionInfoT, string]
 	mssqlPreparedStatements     *simplelru.LRU[mssqlPreparedStatementsKey, string]
 	kafkaTopicUUIDToName        *simplelru.LRU[kafkaparser.UUID, string]
+	kafkaConsumerGroups         *KafkaConsumerGroups
 	payloadExtraction           config.PayloadExtraction
 	httpEnricher                *ebpfhttp.HTTPEnricher
 	dnsEvents                   *expirable.LRU[dnsparser.DNSId, *request.Span]
@@ -422,6 +429,7 @@ func NewEBPFParseContext(cfg *config.EBPFTracer, spansChan *msg.Queue[[]request.
 		postgresPortals            *simplelru.LRU[postgresPortalsKey, string]
 		mssqlPreparedStatements    *simplelru.LRU[mssqlPreparedStatementsKey, string]
 		kafkaTopicUUIDToName       *simplelru.LRU[kafkaparser.UUID, string]
+		kafkaConsumerGroups        *KafkaConsumerGroups
 		mongoRequestCache          PendingMongoDBRequests
 		payloadExtraction          config.PayloadExtraction
 		dnsEvents                  *expirable.LRU[dnsparser.DNSId, *request.Span]
@@ -487,6 +495,8 @@ func NewEBPFParseContext(cfg *config.EBPFTracer, spansChan *msg.Queue[[]request.
 			ptlog().Error("failed to create Kafka topic UUID to name cache", "error", err)
 		}
 
+		kafkaConsumerGroups = NewKafkaConsumerGroups(cfg.KafkaConsumerGroupCacheSize, cfg.KafkaConsumerGroupTTL)
+
 		mongoRequestCache = expirable.NewLRU[MongoRequestKey, *MongoRequestValue](cfg.MongoRequestsCacheSize, nil, 0)
 
 		payloadExtraction = cfg.PayloadExtraction
@@ -514,6 +524,7 @@ func NewEBPFParseContext(cfg *config.EBPFTracer, spansChan *msg.Queue[[]request.
 		postgresDBNames:            postgresDBNames,
 		mssqlPreparedStatements:    mssqlPreparedStatements,
 		kafkaTopicUUIDToName:       kafkaTopicUUIDToName,
+		kafkaConsumerGroups:        kafkaConsumerGroups,
 		payloadExtraction:          payloadExtraction,
 		httpEnricher:               httpEnricher,
 		dnsEvents:                  dnsEvents,
@@ -660,7 +671,7 @@ func ReadBPFTraceAsSpan(parseCtx *EBPFParseContext, cfg *config.EBPFTracer, reco
 		span, ignore, err := ReadTCPRequestIntoSpan(parseCtx, cfg, record, filter)
 		return finalizeParsedSpan(parseCtx, span, ignore, err)
 	case EventTypeGoSarama:
-		span, ignore, err := ReadGoSaramaRequestIntoSpan(record)
+		span, ignore, err := ReadGoSaramaRequestIntoSpan(parseCtx, record)
 		return finalizeParsedSpan(parseCtx, span, ignore, err)
 	case EventTypeGoRedis:
 		span, ignore, err := ReadGoRedisRequestIntoSpan(parseCtx, record)

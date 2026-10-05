@@ -23,11 +23,12 @@ type BpfH2MutationProbeH2TestHelperCalls struct {
 //
 // Used for safe lookups in a Collection or CollectionSpec.
 const (
-	BpfH2MutationProbeMapFaultMask       = "fault_mask"
-	BpfH2MutationProbeMapHelperCalls     = "helper_calls"
-	BpfH2MutationProbeMapInvocations     = "invocations"
-	BpfH2MutationProbeMapSockets         = "sockets"
-	BpfH2MutationProbeProgH2MutationPeer = "h2_mutation_peer"
+	BpfH2MutationProbeMapFaultMask                = "fault_mask"
+	BpfH2MutationProbeMapHelperCalls              = "helper_calls"
+	BpfH2MutationProbeMapInvocations              = "invocations"
+	BpfH2MutationProbeMapSockets                  = "sockets"
+	BpfH2MutationProbeProgH2MutationPeer          = "h2_mutation_peer"
+	BpfH2MutationProbeProgH2MutationPeerTwoFrames = "h2_mutation_peer_two_frames"
 )
 
 // LoadBpfH2MutationProbe returns the embedded CollectionSpec for BpfH2MutationProbe.
@@ -72,7 +73,8 @@ type BpfH2MutationProbeSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type BpfH2MutationProbeProgramSpecs struct {
-	H2MutationPeer *ebpf.ProgramSpec `ebpf:"h2_mutation_peer"`
+	H2MutationPeer          *ebpf.ProgramSpec `ebpf:"h2_mutation_peer"`
+	H2MutationPeerTwoFrames *ebpf.ProgramSpec `ebpf:"h2_mutation_peer_two_frames"`
 }
 
 // BpfH2MutationProbeMapSpecs contains maps before they are loaded into the kernel.
@@ -136,12 +138,14 @@ type BpfH2MutationProbeVariables struct {
 //
 // It can be passed to LoadBpfH2MutationProbeObjects or ebpf.CollectionSpec.LoadAndAssign.
 type BpfH2MutationProbePrograms struct {
-	H2MutationPeer *ebpf.Program `ebpf:"h2_mutation_peer"`
+	H2MutationPeer          *ebpf.Program `ebpf:"h2_mutation_peer"`
+	H2MutationPeerTwoFrames *ebpf.Program `ebpf:"h2_mutation_peer_two_frames"`
 }
 
 func (p *BpfH2MutationProbePrograms) Close() error {
 	return _BpfH2MutationProbeClose(
 		p.H2MutationPeer,
+		p.H2MutationPeerTwoFrames,
 	)
 }
 

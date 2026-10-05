@@ -304,6 +304,22 @@
       "type": "object",
       "description": "Buckets defines the histograms bucket boundaries, and allows users to redefine them"
     },
+    "CloudMetadataConfig": {
+      "properties": {
+        "cluster_name": {
+          "type": "string",
+          "description": "Overrides automatic cluster detection.",
+          "x-env-var": "OTEL_EBPF_CLUSTER_NAME"
+        },
+        "region": {
+          "type": "string",
+          "description": "Overrides automatic region detection.",
+          "x-env-var": "OTEL_EBPF_CLOUD_REGION"
+        }
+      },
+      "type": "object",
+      "description": "CloudMetadataConfig configures overrides for detected cloud metadata."
+    },
     "ContextPropagationMode": {
       "oneOf": [
         {
@@ -500,6 +516,7 @@
               "go",
               "java",
               "nodejs",
+              "php",
               "python",
               "ruby"
             ]
@@ -798,6 +815,24 @@
           "default": "auto",
           "x-env-var": "OTEL_EBPF_INSTRUMENT_CUDA"
         },
+        "kafka_consumer_group_cache_size": {
+          "type": "integer",
+          "description": "Kafka consumer groups cache size: number of processes whose consumer group membership, learned from group-coordination requests, is remembered and reported on consumer spans.",
+          "default": 4096,
+          "x-env-var": "OTEL_KAFKA_CONSUMER_GROUP_CACHE_SIZE"
+        },
+        "kafka_consumer_group_ttl": {
+          "type": "string",
+          "pattern": "^[0-9]+(ms|s|m)$",
+          "description": "Kafka consumer group membership lifetime: how long a consumer is remembered after its last group request, and how long a process is observed before its Fetches are attributed to a group. Keep it above both the heartbeat interval and the longest rebalance of classic consumers (bounded by max.poll.interval.ms, 5m by default), or their Fetches can be reported with another group of their process; a larger value delays the attribute for newly seen processes. The 2m default trades rebalances longer than that for a shorter warm-up; raise it above max.poll.interval.ms when cooperative classic consumers (Kafka Streams) share a process with another group.",
+          "default": "2m",
+          "examples": [
+            "30s",
+            "5m",
+            "1ms"
+          ],
+          "x-env-var": "OTEL_EBPF_BPF_KAFKA_CONSUMER_GROUP_TTL"
+        },
         "kafka_topic_uuid_cache_size": {
           "type": "integer",
           "description": "Kafka Topic UUID to Name cache size.",
@@ -852,6 +887,12 @@
           "$ref": "#/$defs/PayloadExtraction",
           "description": "Configure data extraction/parsing based on protocol"
         },
+        "populate_trace_context": {
+          "type": "boolean",
+          "description": "Keeps the pinned `traces_ctx_v1` map -- the trace and span ID of the request each OS thread is currently serving -- populated for readers outside OBI, such as a profiler correlating samples with spans, or another eBPF program reading the pin directly.  Keeping the map aligned with the active request is not free: runtimes that decouple I/O from processing need a refresh on every context switch, which on Node.js means an `async_hooks` before hook running on every callback. OBI therefore only populates the map when something reads it. Its own reader -- the log enricher -- turns population on regardless of this setting; a reader outside OBI has no way to announce itself, so it opts in here.  Go channel span links may be affected: the handoff correlation falls back to this map when it cannot resolve the sending goroutine from the protocol maps, so links that relied on that fallback are lost while population is off.",
+          "default": false,
+          "x-env-var": "OTEL_EBPF_BPF_POPULATE_TRACE_CONTEXT"
+        },
         "postgres_prepared_statements_cache_size": {
           "type": "integer",
           "description": "Postgres prepared statements cache size.",
@@ -899,6 +940,24 @@
       },
       "type": "object",
       "description": "EBPFTracer configuration for eBPF programs"
+    },
+    "ECSNameResolverConfig": {
+      "properties": {
+        "refresh_interval": {
+          "type": "string",
+          "pattern": "^[0-9]+(ms|s|m)$",
+          "description": "Controls how often the ECS task inventory is refreshed.",
+          "default": "30s",
+          "examples": [
+            "30s",
+            "5m",
+            "1ms"
+          ],
+          "x-env-var": "OTEL_EBPF_NAME_RESOLVER_ECS_REFRESH_INTERVAL"
+        }
+      },
+      "type": "object",
+      "description": "ECSNameResolverConfig configures ECS service name resolution."
     },
     "ElasticsearchConfig": {
       "properties": {
@@ -1000,7 +1059,6 @@
               "*",
               "all",
               "application",
-              "application_host",
               "application_red",
               "application_runtime",
               "application_service_graph",
@@ -1014,7 +1072,8 @@
               "stats_tcp_failed_connections",
               "stats_tcp_io",
               "stats_tcp_retransmits",
-              "stats_tcp_rtt"
+              "stats_tcp_rtt",
+              "stats_tcp_successful_connections"
             ]
           },
           {
@@ -1248,7 +1307,7 @@
         "features": {
           "$ref": "#/$defs/Features",
           "description": "Specifies which metric features to export. Accepted values: application, network, application_span, application_service_graph, stats, ... envDefault is provided to avoid breaking changes",
-          "default": 768,
+          "default": 1536,
           "x-env-var": "OTEL_EBPF_METRICS_FEATURES"
         }
       },
@@ -2079,11 +2138,15 @@
           "default": 1024,
           "x-env-var": "OTEL_EBPF_NAME_RESOLVER_CACHE_LEN"
         },
+        "ecs": {
+          "$ref": "#/$defs/ECSNameResolverConfig"
+        },
         "sources": {
           "items": {
             "type": "string",
             "enum": [
               "dns",
+              "ecs",
               "k8s",
               "kube",
               "kubernetes",
@@ -2091,9 +2154,10 @@
             ]
           },
           "type": "array",
-          "description": "Specifies the backends used for name resolving. Accepted values: dns, k8s, rdns",
+          "description": "Specifies the backends used for name resolving. Accepted values: dns, ecs, k8s, rdns. The \"ecs\" source requires ecs:ListTasks and ecs:DescribeTasks permissions.",
           "default": [
-            "k8s"
+            "k8s",
+            "ecs"
           ],
           "x-env-var": "OTEL_EBPF_NAME_RESOLVER_SOURCES"
         }
@@ -3190,6 +3254,9 @@
       "type": "boolean",
       "default": false,
       "x-env-var": "OTEL_EBPF_CHANNEL_SEND_TIMEOUT_PANIC"
+    },
+    "cloud_metadata": {
+      "$ref": "#/$defs/CloudMetadataConfig"
     },
     "discovery": {
       "$ref": "#/$defs/DiscoveryConfig",

@@ -87,6 +87,13 @@ type BpfGoroutineMetadata struct {
 	Timestamp uint64
 }
 
+type BpfGrpcH2OwnedStreamKeyT struct {
+	_            structs.HostLayout
+	SocketCookie uint64
+	Pid          uint32
+	StreamId     uint32
+}
+
 type BpfGrpcTransportsT struct {
 	_    structs.HostLayout
 	Conn BpfConnectionInfoT
@@ -146,9 +153,15 @@ type BpfMsgBufferT struct {
 	CpuId       uint32
 }
 
+type BpfObiCtxInfoT struct {
+	_       structs.HostLayout
+	TraceId [16]uint8
+	SpanId  [8]uint8
+}
+
 type BpfOffTableT struct {
 	_     structs.HostLayout
-	Table [134]uint64
+	Table [136]uint64
 }
 
 type BpfPidConnectionInfoT struct {
@@ -300,6 +313,7 @@ const (
 	BpfMapGoH2OwnedStreams                      = "go_h2_owned_streams"
 	BpfMapGoOffsetsMap                          = "go_offsets_map"
 	BpfMapGoTraceMap                            = "go_trace_map"
+	BpfMapGrpcH2OwnedStreams                    = "grpc_h2_owned_streams"
 	BpfMapH2WriteExpectedStorage                = "h2_write_expected_storage"
 	BpfMapHandledByGoConn                       = "handled_by_go_conn"
 	BpfMapIncomingTraceMap                      = "incoming_trace_map"
@@ -308,6 +322,7 @@ const (
 	BpfMapMsgBufferMem                          = "msg_buffer_mem"
 	BpfMapMsgBuffers                            = "msg_buffers"
 	BpfMapNginxUpstream                         = "nginx_upstream"
+	BpfMapNodeManualCtxShadow                   = "node_manual_ctx_shadow"
 	BpfMapNodejsFdMap                           = "nodejs_fd_map"
 	BpfMapOngoingClientConnections              = "ongoing_client_connections"
 	BpfMapOngoingGoroutines                     = "ongoing_goroutines"
@@ -332,11 +347,13 @@ const (
 	BpfMapSkH2Flags                             = "sk_h2_flags"
 	BpfMapSkTpInfoPidMap                        = "sk_tp_info_pid_map"
 	BpfMapSockDir                               = "sock_dir"
+	BpfMapSocketCookie                          = "socket_cookie"
 	BpfMapTailcallCtxStorage                    = "tailcall_ctx_storage"
 	BpfMapTpInfoBackupStorage                   = "tp_info_backup_storage"
 	BpfMapTpInfoStorage                         = "tp_info_storage"
 	BpfMapTpStrBufStorage                       = "tp_str_buf_storage"
 	BpfMapTraceMap                              = "trace_map"
+	BpfMapTracesCtxV1                           = "traces_ctx_v1"
 	BpfMapTrackedSockCookies                    = "tracked_sock_cookies"
 	BpfMapValidPids                             = "valid_pids"
 	BpfProgObiPacketExtender                    = "obi_packet_extender"
@@ -366,6 +383,7 @@ const (
 	BpfVarG_bpfProbeWriteUserEnabled            = "g_bpf_probe_write_user_enabled"
 	BpfVarG_bpfTraceparentEnabled               = "g_bpf_traceparent_enabled"
 	BpfVarG_goH2WriteFailStep                   = "g_go_h2_write_fail_step"
+	BpfVarG_tracesCtxV1Enabled                  = "g_traces_ctx_v1_enabled"
 	BpfVarHighRequestVolume                     = "high_request_volume"
 	BpfVarInjectFlags                           = "inject_flags"
 	BpfVarIp4ip6Prefix                          = "ip4ip6_prefix"
@@ -446,6 +464,7 @@ type BpfMapSpecs struct {
 	GoH2OwnedStreams          *ebpf.MapSpec `ebpf:"go_h2_owned_streams"`
 	GoOffsetsMap              *ebpf.MapSpec `ebpf:"go_offsets_map"`
 	GoTraceMap                *ebpf.MapSpec `ebpf:"go_trace_map"`
+	GrpcH2OwnedStreams        *ebpf.MapSpec `ebpf:"grpc_h2_owned_streams"`
 	H2WriteExpectedStorage    *ebpf.MapSpec `ebpf:"h2_write_expected_storage"`
 	HandledByGoConn           *ebpf.MapSpec `ebpf:"handled_by_go_conn"`
 	IncomingTraceMap          *ebpf.MapSpec `ebpf:"incoming_trace_map"`
@@ -454,6 +473,7 @@ type BpfMapSpecs struct {
 	MsgBufferMem              *ebpf.MapSpec `ebpf:"msg_buffer_mem"`
 	MsgBuffers                *ebpf.MapSpec `ebpf:"msg_buffers"`
 	NginxUpstream             *ebpf.MapSpec `ebpf:"nginx_upstream"`
+	NodeManualCtxShadow       *ebpf.MapSpec `ebpf:"node_manual_ctx_shadow"`
 	NodejsFdMap               *ebpf.MapSpec `ebpf:"nodejs_fd_map"`
 	OngoingClientConnections  *ebpf.MapSpec `ebpf:"ongoing_client_connections"`
 	OngoingGoroutines         *ebpf.MapSpec `ebpf:"ongoing_goroutines"`
@@ -478,11 +498,13 @@ type BpfMapSpecs struct {
 	SkH2Flags                 *ebpf.MapSpec `ebpf:"sk_h2_flags"`
 	SkTpInfoPidMap            *ebpf.MapSpec `ebpf:"sk_tp_info_pid_map"`
 	SockDir                   *ebpf.MapSpec `ebpf:"sock_dir"`
+	SocketCookie              *ebpf.MapSpec `ebpf:"socket_cookie"`
 	TailcallCtxStorage        *ebpf.MapSpec `ebpf:"tailcall_ctx_storage"`
 	TpInfoBackupStorage       *ebpf.MapSpec `ebpf:"tp_info_backup_storage"`
 	TpInfoStorage             *ebpf.MapSpec `ebpf:"tp_info_storage"`
 	TpStrBufStorage           *ebpf.MapSpec `ebpf:"tp_str_buf_storage"`
 	TraceMap                  *ebpf.MapSpec `ebpf:"trace_map"`
+	TracesCtxV1               *ebpf.MapSpec `ebpf:"traces_ctx_v1"`
 	TrackedSockCookies        *ebpf.MapSpec `ebpf:"tracked_sock_cookies"`
 	ValidPids                 *ebpf.MapSpec `ebpf:"valid_pids"`
 }
@@ -506,6 +528,7 @@ type BpfVariableSpecs struct {
 	G_bpfProbeWriteUserEnabled *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
 	HighRequestVolume          *ebpf.VariableSpec `ebpf:"high_request_volume"`
 	InjectFlags                *ebpf.VariableSpec `ebpf:"inject_flags"`
 	Ip4ip6Prefix               *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
@@ -546,6 +569,7 @@ type BpfMaps struct {
 	GoH2OwnedStreams          *ebpf.Map `ebpf:"go_h2_owned_streams"`
 	GoOffsetsMap              *ebpf.Map `ebpf:"go_offsets_map"`
 	GoTraceMap                *ebpf.Map `ebpf:"go_trace_map"`
+	GrpcH2OwnedStreams        *ebpf.Map `ebpf:"grpc_h2_owned_streams"`
 	H2WriteExpectedStorage    *ebpf.Map `ebpf:"h2_write_expected_storage"`
 	HandledByGoConn           *ebpf.Map `ebpf:"handled_by_go_conn"`
 	IncomingTraceMap          *ebpf.Map `ebpf:"incoming_trace_map"`
@@ -554,6 +578,7 @@ type BpfMaps struct {
 	MsgBufferMem              *ebpf.Map `ebpf:"msg_buffer_mem"`
 	MsgBuffers                *ebpf.Map `ebpf:"msg_buffers"`
 	NginxUpstream             *ebpf.Map `ebpf:"nginx_upstream"`
+	NodeManualCtxShadow       *ebpf.Map `ebpf:"node_manual_ctx_shadow"`
 	NodejsFdMap               *ebpf.Map `ebpf:"nodejs_fd_map"`
 	OngoingClientConnections  *ebpf.Map `ebpf:"ongoing_client_connections"`
 	OngoingGoroutines         *ebpf.Map `ebpf:"ongoing_goroutines"`
@@ -578,11 +603,13 @@ type BpfMaps struct {
 	SkH2Flags                 *ebpf.Map `ebpf:"sk_h2_flags"`
 	SkTpInfoPidMap            *ebpf.Map `ebpf:"sk_tp_info_pid_map"`
 	SockDir                   *ebpf.Map `ebpf:"sock_dir"`
+	SocketCookie              *ebpf.Map `ebpf:"socket_cookie"`
 	TailcallCtxStorage        *ebpf.Map `ebpf:"tailcall_ctx_storage"`
 	TpInfoBackupStorage       *ebpf.Map `ebpf:"tp_info_backup_storage"`
 	TpInfoStorage             *ebpf.Map `ebpf:"tp_info_storage"`
 	TpStrBufStorage           *ebpf.Map `ebpf:"tp_str_buf_storage"`
 	TraceMap                  *ebpf.Map `ebpf:"trace_map"`
+	TracesCtxV1               *ebpf.Map `ebpf:"traces_ctx_v1"`
 	TrackedSockCookies        *ebpf.Map `ebpf:"tracked_sock_cookies"`
 	ValidPids                 *ebpf.Map `ebpf:"valid_pids"`
 }
@@ -601,6 +628,7 @@ func (m *BpfMaps) Close() error {
 		m.GoH2OwnedStreams,
 		m.GoOffsetsMap,
 		m.GoTraceMap,
+		m.GrpcH2OwnedStreams,
 		m.H2WriteExpectedStorage,
 		m.HandledByGoConn,
 		m.IncomingTraceMap,
@@ -609,6 +637,7 @@ func (m *BpfMaps) Close() error {
 		m.MsgBufferMem,
 		m.MsgBuffers,
 		m.NginxUpstream,
+		m.NodeManualCtxShadow,
 		m.NodejsFdMap,
 		m.OngoingClientConnections,
 		m.OngoingGoroutines,
@@ -633,11 +662,13 @@ func (m *BpfMaps) Close() error {
 		m.SkH2Flags,
 		m.SkTpInfoPidMap,
 		m.SockDir,
+		m.SocketCookie,
 		m.TailcallCtxStorage,
 		m.TpInfoBackupStorage,
 		m.TpInfoStorage,
 		m.TpStrBufStorage,
 		m.TraceMap,
+		m.TracesCtxV1,
 		m.TrackedSockCookies,
 		m.ValidPids,
 	)
@@ -662,6 +693,7 @@ type BpfVariables struct {
 	G_bpfProbeWriteUserEnabled *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
 	HighRequestVolume          *ebpf.Variable `ebpf:"high_request_volume"`
 	InjectFlags                *ebpf.Variable `ebpf:"inject_flags"`
 	Ip4ip6Prefix               *ebpf.Variable `ebpf:"ip4ip6_prefix"`

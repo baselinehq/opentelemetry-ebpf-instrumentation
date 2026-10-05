@@ -52,6 +52,15 @@ const (
 	EventTypeGPUCudaGraphLaunch
 	EventTypeGPUCudaMalloc
 	EventTypeGPUCudaMemcpy
+	EventTypeGPUCudaFree
+	EventTypeGPUCudaMemset
+	EventTypeGPUCudaStreamCreate
+	EventTypeGPUCudaStreamDestroy
+	EventTypeGPUCudaEventRecord
+	EventTypeGPUCudaEventSynchronize
+	EventTypeGPUCudaStreamSynchronize
+	EventTypeGPUCudaDeviceSynchronize
+	EventTypeGPUCudaHostRegister
 	EventTypeFailedConnect
 	EventTypeDNS
 	EventTypeCouchbaseClient
@@ -184,6 +193,24 @@ func (t EventType) String() string {
 		return "CUDAMalloc"
 	case EventTypeGPUCudaMemcpy:
 		return "CUDAMemcpy"
+	case EventTypeGPUCudaFree:
+		return "CUDAFree"
+	case EventTypeGPUCudaMemset:
+		return "CUDAMemset"
+	case EventTypeGPUCudaStreamCreate:
+		return "CUDAStreamCreate"
+	case EventTypeGPUCudaStreamDestroy:
+		return "CUDAStreamDestroy"
+	case EventTypeGPUCudaEventRecord:
+		return "CUDAEventRecord"
+	case EventTypeGPUCudaEventSynchronize:
+		return "CUDAEventSynchronize"
+	case EventTypeGPUCudaStreamSynchronize:
+		return "CUDAStreamSynchronize"
+	case EventTypeGPUCudaDeviceSynchronize:
+		return "CUDADeviceSynchronize"
+	case EventTypeGPUCudaHostRegister:
+		return "CUDAHostRegister"
 	case EventTypeMongoClient:
 		return "MongoClient"
 	case EventTypeManualSpan:
@@ -324,6 +351,10 @@ func (e *SQLError) ResponseStatusCode() string {
 type MessagingInfo struct {
 	Offset    int64 `json:"offset"`
 	Partition int   `json:"partition"`
+	// HasPartition reports whether Partition and Offset were read from the wire. The
+	// consumer group can be known while the partition list was cut by the kernel buffer.
+	HasPartition  bool   `json:"hasPartition"`
+	ConsumerGroup string `json:"consumerGroup"`
 }
 
 type GraphQL struct {
@@ -1041,20 +1072,55 @@ type JSONRPC struct {
 	RequestID    string `json:"requestId"`
 	ErrorCode    int    `json:"errorCode,omitempty"`
 	ErrorMessage string `json:"errorMessage,omitempty"`
+	// ServiceQualified marks a method read out of a header that names a
+	// service, which only the Go net/rpc uprobe observes. It survives payload
+	// extraction, which overwrites everything else it parses off the wire.
+	ServiceQualified bool `json:"-"`
+}
+
+// JSONRPCVersionV1 is the version Go's net/rpc/jsonrpc speaks, and the only
+// one the Go uprobes report.
+const JSONRPCVersionV1 = "1.0"
+
+// QualifiedMethod returns the method in the shape `rpc.method` is defined as:
+// the fully-qualified name from the RPC interface perspective, whose semconv
+// examples separate the service from the method with a slash
+// ('EchoService/Echo').
+//
+// Only net/rpc names a service, and it does so with a dot, so the last dot
+// becomes the separator there. JSON-RPC itself assigns the dot no meaning and
+// takes arbitrary method names, so a method nothing qualified is returned as
+// it came off the wire: splitting 'inventory.lookup.v2' would claim a service
+// boundary nothing observed.
+func (j *JSONRPC) QualifiedMethod() string {
+	if !j.ServiceQualified {
+		return j.Method
+	}
+
+	i := strings.LastIndexByte(j.Method, '.')
+	if i <= 0 || i == len(j.Method)-1 {
+		return j.Method
+	}
+
+	return j.Method[:i] + "/" + j.Method[i+1:]
 }
 
 // Generic embedding provider types (Voyage AI, Cohere, Jina AI)
 
 // GenAI operation name constants aligned with OTel semantic conventions.
 const (
-	ChatOperationName         = "chat"
-	CompletionOperationName   = "text_completion"
-	GenerationOperationName   = "generation"
-	InvokeModelOperationName  = "invoke_model"
-	EmbeddingOperationName    = "embeddings"
-	ResponseOperationName     = "response"
-	ConversationOperationName = "conversation"
-	ExecuteToolOperationName  = "execute_tool"
+	ChatOperationName           = "chat"
+	CompletionOperationName     = "text_completion"
+	GenerationOperationName     = "generation"
+	InvokeModelOperationName    = "invoke_model"
+	EmbeddingOperationName      = "embeddings"
+	ResponseOperationName       = "response"
+	ConversationOperationName   = "conversation"
+	ExecuteToolOperationName    = "execute_tool"
+	MessageOperationName        = "message"
+	ChatKitSessionOperationName = "chatkit.session"
+	ChatKitThreadOperationName  = "chatkit.thread"
+	OtherOperationName          = "_OTHER"
 )
 
 // VendorEmbedding represents a generic embedding API provider such as
@@ -1512,7 +1578,7 @@ type Span struct {
 	ResponseHeaders map[string][]string `json:"responseHeaders,omitempty"`
 
 	// Full HTTP message/frame bytes; zero means not measured.
-	RequestMessageBytes int64 `json:"requestMessageBytes,omitempty"`
+	RequestMessageBytes  int64 `json:"requestMessageBytes,omitempty"`
 	ResponseMessageBytes int64 `json:"responseMessageBytes,omitempty"`
 
 	// RequestBodyContent stores the extracted HTTP request body (JSON string, possibly with obfuscated fields).
@@ -1526,6 +1592,15 @@ type Span struct {
 
 	// ManualOTelJSON stores OTLP JSON emitted by the Go Auto SDK bridge.
 	ManualOTelJSON []byte `json:"-"`
+
+	// CudaDevice* name the GPU a CUDA call ran on, as reported by the CUDA
+	// introspection APIs the process itself calls. CudaDeviceKnown is set only
+	// when the calling thread's current device was actually observed; when it is
+	// false the index, UUID and model are not meaningful and must be omitted.
+	CudaDeviceKnown bool   `json:"-"`
+	CudaDeviceIndex uint32 `json:"-"`
+	CudaDeviceUUID  string `json:"-"`
+	CudaDeviceModel string `json:"-"`
 }
 
 func (s *Span) Inside(parent *Span) bool {
@@ -1583,6 +1658,7 @@ func spanAttributes(s *Span) SpanAttributes {
 		if s.SubType == HTTPSubtypeElasticsearch && s.Elasticsearch != nil {
 			attrs["dbCollectionName"] = s.Elasticsearch.DBCollectionName
 			attrs["nodeName"] = s.Elasticsearch.NodeName
+			attrs["dbNamespace"] = s.DBNamespace
 			attrs["dbOperationName"] = s.Elasticsearch.DBOperationName
 			attrs["dbQueryText"] = s.Elasticsearch.DBQueryText
 			attrs["dbSystemName"] = s.Elasticsearch.DBSystemName
@@ -1599,7 +1675,6 @@ func spanAttributes(s *Span) SpanAttributes {
 		if s.SubType == HTTPSubtypeAWSSQS && s.AWS != nil {
 			sqs := s.AWS.SQS
 			attrs["awsRequestID"] = sqs.Meta.RequestID
-			attrs["awsExtendedRequestID"] = sqs.Meta.ExtendedRequestID
 			attrs["awsRegion"] = sqs.Meta.Region
 			attrs["awsSQSOperationName"] = sqs.OperationName
 			attrs["awsSQSOperationType"] = sqs.OperationType
@@ -1692,9 +1767,14 @@ func spanAttributes(s *Span) SpanAttributes {
 			"topic":      s.Path,
 		}
 		if s.MessagingInfo != nil {
-			attrs["partition"] = strconv.FormatUint(uint64(s.MessagingInfo.Partition), 10)
-			if s.Method == MessagingProcess {
-				attrs["offset"] = strconv.FormatUint(uint64(s.MessagingInfo.Offset), 10)
+			if s.MessagingInfo.HasPartition {
+				attrs["partition"] = strconv.FormatUint(uint64(s.MessagingInfo.Partition), 10)
+				if s.Method == MessagingProcess {
+					attrs["offset"] = strconv.FormatUint(uint64(s.MessagingInfo.Offset), 10)
+				}
+			}
+			if s.MessagingInfo.ConsumerGroup != "" {
+				attrs["consumerGroup"] = s.MessagingInfo.ConsumerGroup
 			}
 		}
 		return attrs
@@ -1736,6 +1816,14 @@ func spanAttributes(s *Span) SpanAttributes {
 			"size": strconv.FormatInt(s.ContentLength, 10),
 			"kind": CudaMemcpyName(s.SubType),
 		}
+	case EventTypeGPUCudaFree, EventTypeGPUCudaMemset, EventTypeGPUCudaHostRegister:
+		return SpanAttributes{
+			"size": strconv.FormatInt(s.ContentLength, 10),
+		}
+	case EventTypeGPUCudaStreamCreate, EventTypeGPUCudaStreamDestroy,
+		EventTypeGPUCudaEventRecord, EventTypeGPUCudaEventSynchronize,
+		EventTypeGPUCudaStreamSynchronize, EventTypeGPUCudaDeviceSynchronize:
+		return SpanAttributes{}
 	case EventTypeMongoClient:
 		return SpanAttributes{
 			"serverAddr": SpanHost(s),
@@ -1982,21 +2070,24 @@ func HTTPSpanStatusCode(span *Span) string {
 		return StatusCodeError
 	}
 
-	if span.Type == EventTypeHTTPClient {
-		if span.Status < 400 {
-			// A provider can report a failure inside a 2xx response, per the OTel
-			// GenAI spec: https://opentelemetry.io/docs/specs/semconv/gen-ai/openai/
-			if span.GenAIFailed() {
-				return StatusCodeError
-			}
-
-			return StatusCodeUnset
-		}
-	} else if span.Status < 500 {
-		return StatusCodeUnset
+	if httpStatusFailed(span) {
+		return StatusCodeError
 	}
 
-	return StatusCodeError
+	// A provider can report a failure inside a 2xx response, per the OTel
+	// GenAI spec: https://opentelemetry.io/docs/specs/semconv/gen-ai/openai/
+	if span.Type == EventTypeHTTPClient && span.GenAIFailed() {
+		return StatusCodeError
+	}
+
+	return StatusCodeUnset
+}
+
+func httpStatusFailed(span *Span) bool {
+	if span.Type == EventTypeHTTPClient {
+		return span.Status >= 400
+	}
+	return span.Status >= 500
 }
 
 var (
@@ -2263,7 +2354,7 @@ func (s *Span) TraceName() string {
 
 		if s.SubType == HTTPSubtypeJSONRPC && s.JSONRPC != nil {
 			if s.JSONRPC.Method != "" {
-				return s.JSONRPC.Method
+				return s.JSONRPC.QualifiedMethod()
 			}
 			return "jsonrpc"
 		}

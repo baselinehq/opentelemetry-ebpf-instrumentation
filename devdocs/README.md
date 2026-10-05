@@ -5,6 +5,14 @@ references. It also contains the operator-facing Config migration guide linked
 from the repository README. General setup documentation lives on the
 OpenTelemetry website.
 
+## Configuration development policy
+
+Config v1 is frozen for backward compatibility. Do not add fields, features,
+or bug fixes to the v1 configuration model. All configuration development must
+target Config v2, including its schema, validation, conversion, examples, and
+documentation. Users who need configuration fixes or new features should
+follow the [Config v1 to v2 migration guide](config/version-2.0/migration.md).
+
 ## Table Of Contents
 
 - [Pipeline Map](pipeline-map.md): explanation of pipeline map.
@@ -28,3 +36,4 @@ OpenTelemetry website.
 - [Metrics](./metrics.md): how the NetO11y, AppO11y, and StatsO11y pipelines turn eBPF events into exported metrics, and where to edit when adding a new one.
 - [BPF Metrics Collection](bpf-metrics-collection.md): how OBI discovers all existing supported probes and LRU hash maps on the host and reports their metrics.
 - [Runtime Metrics](runtimes/README.md): developer notes for the `application_runtime` feature and per-runtime coverage.
+- [GPU Monitoring](gpu-monitoring.md): how OBI instruments CUDA through uprobes on `libcudart` and `libcuda`, and where to extend it.

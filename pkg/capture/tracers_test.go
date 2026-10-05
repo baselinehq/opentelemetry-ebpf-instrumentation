@@ -6,11 +6,13 @@
 package capture
 
 import (
-	"github.com/cilium/ebpf"
-	"go.opentelemetry.io/obi/pkg/internal/ebpf/generictracer"
-	"go.opentelemetry.io/obi/pkg/internal/ebpf/gotracer"
 	"reflect"
 	"testing"
+
+	"github.com/cilium/ebpf"
+
+	"go.opentelemetry.io/obi/pkg/internal/ebpf/generictracer"
+	"go.opentelemetry.io/obi/pkg/internal/ebpf/gotracer"
 )
 
 func TestHTTPProbeSelection(t *testing.T) {

@@ -125,19 +125,19 @@ type BpfGrpcFramesCtxT struct {
 	_               structs.HostLayout
 	PrevInfo        BpfHttp2GrpcRequestT
 	HasPrevInfo     uint8
-	FoundDataFrame  uint8
 	Iterations      uint8
 	TerminateSearch uint8
+	Pad             uint8
 	Pos             int32
 	SavedBufPos     int32
 	SavedStreamId   uint32
 	Args            BpfCallProtocolArgsT
 	Stream          BpfHttp2ConnStreamT
 	Huff            struct {
-		_    structs.HostLayout
-		At   uint16
-		Len  uint8
-		Next uint8
+		_   structs.HostLayout
+		At  uint16
+		Len uint8
+		Pad uint8
 	}
 	HuffScan struct {
 		_      structs.HostLayout
@@ -157,6 +157,14 @@ type BpfGrpcTransportsT struct {
 	Type uint8
 	Pad  [3]uint8
 	Tp   BpfTpInfoT
+}
+
+type BpfH2CutFrameT struct {
+	_    structs.HostLayout
+	Skip uint32
+	Len  uint16
+	Pad  [2]uint8
+	Data [256]uint8
 }
 
 type BpfHttp2ConnInfoDataT struct {
@@ -385,7 +393,7 @@ type BpfObiUsdtSpec struct {
 
 type BpfOffTableT struct {
 	_     structs.HostLayout
-	Table [134]uint64
+	Table [136]uint64
 }
 
 type BpfPartialConnectionInfoT struct {
@@ -713,6 +721,9 @@ const (
 	BpfMapGoOffsetsMap                                        = "go_offsets_map"
 	BpfMapGoTraceMap                                          = "go_trace_map"
 	BpfMapGrpcFramesCtxMem                                    = "grpc_frames_ctx_mem"
+	BpfMapH2CutFrameStorage                                   = "h2_cut_frame_storage"
+	BpfMapH2CutFrames                                         = "h2_cut_frames"
+	BpfMapH2JoinedStorage                                     = "h2_joined_storage"
 	BpfMapH2TpHuffOutStorage                                  = "h2_tp_huff_out_storage"
 	BpfMapH2TpHuffWinStorage                                  = "h2_tp_huff_win_storage"
 	BpfMapHandledByGoConn                                     = "handled_by_go_conn"
@@ -735,7 +746,9 @@ const (
 	BpfMapMsgBuffers                                          = "msg_buffers"
 	BpfMapMysqlState                                          = "mysql_state"
 	BpfMapNginxUpstream                                       = "nginx_upstream"
+	BpfMapNodeManualCtxShadow                                 = "node_manual_ctx_shadow"
 	BpfMapNodejsFdMap                                         = "nodejs_fd_map"
+	BpfMapNodejsMspanPayloadStorage                           = "nodejs_mspan_payload_storage"
 	BpfMapNodejsRtPayloadStorage                              = "nodejs_rt_payload_storage"
 	BpfMapNodejsV8PayloadStorage                              = "nodejs_v8_payload_storage"
 	BpfMapObiUsdtIpToSpecId                                   = "obi_usdt_ip_to_spec_id"
@@ -835,10 +848,12 @@ const (
 	BpfProgObiProtocolHttpLegacy                              = "obi_protocol_http_legacy"
 	BpfProgObiProtocolTcp                                     = "obi_protocol_tcp"
 	BpfProgObiRbAryShift                                      = "obi_rb_ary_shift"
+	BpfProgObiRbObjAllocRet                                   = "obi_rb_obj_alloc_ret"
 	BpfProgObiRbObjCallInitKw                                 = "obi_rb_obj_call_init_kw"
 	BpfProgObiSocketHttpDnsFilter                             = "obi_socket__http_dns_filter"
 	BpfProgObiSocketHttpFilter                                = "obi_socket__http_filter"
 	BpfProgObiSocketFltBuf                                    = "obi_socket_flt_buf"
+	BpfProgObiTpSchedProcessExit                              = "obi_tp_sched_process_exit"
 	BpfProgObiUprobeBioWrite                                  = "obi_uprobe_bio_write"
 	BpfProgObiUprobeContextDealloc                            = "obi_uprobe_context_dealloc"
 	BpfProgObiUprobeContextRun                                = "obi_uprobe_context_run"
@@ -892,6 +907,7 @@ const (
 	BpfVarG_bpfProbeWriteUserEnabled                          = "g_bpf_probe_write_user_enabled"
 	BpfVarG_bpfTraceparentEnabled                             = "g_bpf_traceparent_enabled"
 	BpfVarG_goH2WriteFailStep                                 = "g_go_h2_write_fail_step"
+	BpfVarG_tracesCtxV1Enabled                                = "g_traces_ctx_v1_enabled"
 	BpfVarHighRequestVolume                                   = "high_request_volume"
 	BpfVarHttpMaxCapturedBytes                                = "http_max_captured_bytes"
 	BpfVarIp4ip6Prefix                                        = "ip4ip6_prefix"
@@ -1005,10 +1021,12 @@ type BpfProgramSpecs struct {
 	ObiProtocolHttpLegacy                              *ebpf.ProgramSpec `ebpf:"obi_protocol_http_legacy"`
 	ObiProtocolTcp                                     *ebpf.ProgramSpec `ebpf:"obi_protocol_tcp"`
 	ObiRbAryShift                                      *ebpf.ProgramSpec `ebpf:"obi_rb_ary_shift"`
+	ObiRbObjAllocRet                                   *ebpf.ProgramSpec `ebpf:"obi_rb_obj_alloc_ret"`
 	ObiRbObjCallInitKw                                 *ebpf.ProgramSpec `ebpf:"obi_rb_obj_call_init_kw"`
 	ObiSocketHttpDnsFilter                             *ebpf.ProgramSpec `ebpf:"obi_socket__http_dns_filter"`
 	ObiSocketHttpFilter                                *ebpf.ProgramSpec `ebpf:"obi_socket__http_filter"`
 	ObiSocketFltBuf                                    *ebpf.ProgramSpec `ebpf:"obi_socket_flt_buf"`
+	ObiTpSchedProcessExit                              *ebpf.ProgramSpec `ebpf:"obi_tp_sched_process_exit"`
 	ObiUprobeBioWrite                                  *ebpf.ProgramSpec `ebpf:"obi_uprobe_bio_write"`
 	ObiUprobeContextDealloc                            *ebpf.ProgramSpec `ebpf:"obi_uprobe_context_dealloc"`
 	ObiUprobeContextRun                                *ebpf.ProgramSpec `ebpf:"obi_uprobe_context_run"`
@@ -1069,6 +1087,9 @@ type BpfMapSpecs struct {
 	GoOffsetsMap                 *ebpf.MapSpec `ebpf:"go_offsets_map"`
 	GoTraceMap                   *ebpf.MapSpec `ebpf:"go_trace_map"`
 	GrpcFramesCtxMem             *ebpf.MapSpec `ebpf:"grpc_frames_ctx_mem"`
+	H2CutFrameStorage            *ebpf.MapSpec `ebpf:"h2_cut_frame_storage"`
+	H2CutFrames                  *ebpf.MapSpec `ebpf:"h2_cut_frames"`
+	H2JoinedStorage              *ebpf.MapSpec `ebpf:"h2_joined_storage"`
 	H2TpHuffOutStorage           *ebpf.MapSpec `ebpf:"h2_tp_huff_out_storage"`
 	H2TpHuffWinStorage           *ebpf.MapSpec `ebpf:"h2_tp_huff_win_storage"`
 	HandledByGoConn              *ebpf.MapSpec `ebpf:"handled_by_go_conn"`
@@ -1091,7 +1112,9 @@ type BpfMapSpecs struct {
 	MsgBuffers                   *ebpf.MapSpec `ebpf:"msg_buffers"`
 	MysqlState                   *ebpf.MapSpec `ebpf:"mysql_state"`
 	NginxUpstream                *ebpf.MapSpec `ebpf:"nginx_upstream"`
+	NodeManualCtxShadow          *ebpf.MapSpec `ebpf:"node_manual_ctx_shadow"`
 	NodejsFdMap                  *ebpf.MapSpec `ebpf:"nodejs_fd_map"`
+	NodejsMspanPayloadStorage    *ebpf.MapSpec `ebpf:"nodejs_mspan_payload_storage"`
 	NodejsRtPayloadStorage       *ebpf.MapSpec `ebpf:"nodejs_rt_payload_storage"`
 	NodejsV8PayloadStorage       *ebpf.MapSpec `ebpf:"nodejs_v8_payload_storage"`
 	ObiUsdtIpToSpecId            *ebpf.MapSpec `ebpf:"obi_usdt_ip_to_spec_id"`
@@ -1174,6 +1197,7 @@ type BpfVariableSpecs struct {
 	G_bpfProbeWriteUserEnabled  *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled     *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep         *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled        *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
 	HighRequestVolume           *ebpf.VariableSpec `ebpf:"high_request_volume"`
 	HttpMaxCapturedBytes        *ebpf.VariableSpec `ebpf:"http_max_captured_bytes"`
 	Ip4ip6Prefix                *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
@@ -1243,6 +1267,9 @@ type BpfMaps struct {
 	GoOffsetsMap                 *ebpf.Map `ebpf:"go_offsets_map"`
 	GoTraceMap                   *ebpf.Map `ebpf:"go_trace_map"`
 	GrpcFramesCtxMem             *ebpf.Map `ebpf:"grpc_frames_ctx_mem"`
+	H2CutFrameStorage            *ebpf.Map `ebpf:"h2_cut_frame_storage"`
+	H2CutFrames                  *ebpf.Map `ebpf:"h2_cut_frames"`
+	H2JoinedStorage              *ebpf.Map `ebpf:"h2_joined_storage"`
 	H2TpHuffOutStorage           *ebpf.Map `ebpf:"h2_tp_huff_out_storage"`
 	H2TpHuffWinStorage           *ebpf.Map `ebpf:"h2_tp_huff_win_storage"`
 	HandledByGoConn              *ebpf.Map `ebpf:"handled_by_go_conn"`
@@ -1265,7 +1292,9 @@ type BpfMaps struct {
 	MsgBuffers                   *ebpf.Map `ebpf:"msg_buffers"`
 	MysqlState                   *ebpf.Map `ebpf:"mysql_state"`
 	NginxUpstream                *ebpf.Map `ebpf:"nginx_upstream"`
+	NodeManualCtxShadow          *ebpf.Map `ebpf:"node_manual_ctx_shadow"`
 	NodejsFdMap                  *ebpf.Map `ebpf:"nodejs_fd_map"`
+	NodejsMspanPayloadStorage    *ebpf.Map `ebpf:"nodejs_mspan_payload_storage"`
 	NodejsRtPayloadStorage       *ebpf.Map `ebpf:"nodejs_rt_payload_storage"`
 	NodejsV8PayloadStorage       *ebpf.Map `ebpf:"nodejs_v8_payload_storage"`
 	ObiUsdtIpToSpecId            *ebpf.Map `ebpf:"obi_usdt_ip_to_spec_id"`
@@ -1347,6 +1376,9 @@ func (m *BpfMaps) Close() error {
 		m.GoOffsetsMap,
 		m.GoTraceMap,
 		m.GrpcFramesCtxMem,
+		m.H2CutFrameStorage,
+		m.H2CutFrames,
+		m.H2JoinedStorage,
 		m.H2TpHuffOutStorage,
 		m.H2TpHuffWinStorage,
 		m.HandledByGoConn,
@@ -1369,7 +1401,9 @@ func (m *BpfMaps) Close() error {
 		m.MsgBuffers,
 		m.MysqlState,
 		m.NginxUpstream,
+		m.NodeManualCtxShadow,
 		m.NodejsFdMap,
+		m.NodejsMspanPayloadStorage,
 		m.NodejsRtPayloadStorage,
 		m.NodejsV8PayloadStorage,
 		m.ObiUsdtIpToSpecId,
@@ -1453,6 +1487,7 @@ type BpfVariables struct {
 	G_bpfProbeWriteUserEnabled  *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled     *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep         *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled        *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
 	HighRequestVolume           *ebpf.Variable `ebpf:"high_request_volume"`
 	HttpMaxCapturedBytes        *ebpf.Variable `ebpf:"http_max_captured_bytes"`
 	Ip4ip6Prefix                *ebpf.Variable `ebpf:"ip4ip6_prefix"`
@@ -1528,10 +1563,12 @@ type BpfPrograms struct {
 	ObiProtocolHttpLegacy                              *ebpf.Program `ebpf:"obi_protocol_http_legacy"`
 	ObiProtocolTcp                                     *ebpf.Program `ebpf:"obi_protocol_tcp"`
 	ObiRbAryShift                                      *ebpf.Program `ebpf:"obi_rb_ary_shift"`
+	ObiRbObjAllocRet                                   *ebpf.Program `ebpf:"obi_rb_obj_alloc_ret"`
 	ObiRbObjCallInitKw                                 *ebpf.Program `ebpf:"obi_rb_obj_call_init_kw"`
 	ObiSocketHttpDnsFilter                             *ebpf.Program `ebpf:"obi_socket__http_dns_filter"`
 	ObiSocketHttpFilter                                *ebpf.Program `ebpf:"obi_socket__http_filter"`
 	ObiSocketFltBuf                                    *ebpf.Program `ebpf:"obi_socket_flt_buf"`
+	ObiTpSchedProcessExit                              *ebpf.Program `ebpf:"obi_tp_sched_process_exit"`
 	ObiUprobeBioWrite                                  *ebpf.Program `ebpf:"obi_uprobe_bio_write"`
 	ObiUprobeContextDealloc                            *ebpf.Program `ebpf:"obi_uprobe_context_dealloc"`
 	ObiUprobeContextRun                                *ebpf.Program `ebpf:"obi_uprobe_context_run"`
@@ -1612,10 +1649,12 @@ func (p *BpfPrograms) Close() error {
 		p.ObiProtocolHttpLegacy,
 		p.ObiProtocolTcp,
 		p.ObiRbAryShift,
+		p.ObiRbObjAllocRet,
 		p.ObiRbObjCallInitKw,
 		p.ObiSocketHttpDnsFilter,
 		p.ObiSocketHttpFilter,
 		p.ObiSocketFltBuf,
+		p.ObiTpSchedProcessExit,
 		p.ObiUprobeBioWrite,
 		p.ObiUprobeContextDealloc,
 		p.ObiUprobeContextRun,

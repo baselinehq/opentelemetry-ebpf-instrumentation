@@ -30,6 +30,10 @@ OpenTelemetry standards and strives to be compatible with that ecosystem.
 
 ## Development
 
+For a Go development environment with Docker access (especially useful for non-Linux users),
+see the [development container instructions](.devcontainer/README.md), including VS Code,
+IntelliJ IDEA, and terminal workflows.
+
 ### Compiling the project
 
 #### Requirements
@@ -267,9 +271,10 @@ For more information about the maintainer role, see the [community repository](h
 
 ### Approvers
 
+* [Giuseppe Ognibene](https://github.com/pinoOgni), Coralogix
+* [Haibin Zhang](https://github.com/NameHaibinZhang), Alibaba Cloud
 * [Marc Tudurí](https://github.com/marctc), Grafana
 * [Stephen Lang](https://github.com/skl), Grafana
-* [Giuseppe Ognibene](https://github.com/pinoOgni), Coralogix
 
 For more information about the approver role, see the [community repository](https://github.com/open-telemetry/community/blob/main/guides/contributor/membership.md#approver).
 

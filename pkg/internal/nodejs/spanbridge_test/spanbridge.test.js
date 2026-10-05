@@ -42,6 +42,34 @@ test('SDK already registered before injection: bridge stays inert', () => {
   assert.deepStrictEqual(r.app, ['s1'], 'the app SDK captures its own span');
 });
 
+// Every other test in this suite stubs the transport, so this is the only
+// place the real fs.existsSync runs. The whole mechanism rests on it answering
+// a path that cannot resolve by returning rather than throwing, and this file
+// runs on the CI Node matrix, so that assumption is checked per version here
+// instead of only in the author's harness.
+test('the real fs.existsSync answers a sentinel path without throwing', () => {
+  const realFs = require('fs');
+  let threw = null;
+  let result;
+  try {
+    result = realFs.existsSync('/dev/null/obi-span/{"name":"probe"}');
+  } catch (e) {
+    threw = String((e && e.message) || e);
+  }
+  assert.strictEqual(threw, null, 'fs.existsSync must not throw on a sentinel path');
+  assert.strictEqual(result, false, 'a sentinel path must not resolve');
+});
+
+test('throwing transport: span.end() never throws into the app', () => {
+  // fs.existsSync does not throw for a path that simply does not exist, but it
+  // can under Node's permission model. The guard around the emit is the only
+  // thing keeping that out of application code, so it is exercised here rather
+  // than left to the transport never failing.
+  const r = runScenario('throwing-transport');
+  assert.strictEqual(r.threw, null, 'span.end() must not throw when the transport does');
+  assert.deepStrictEqual(r.bridge, ['s1'], 'the span is still emitted before the transport fails');
+});
+
 test('hostile attribute/name: span.end() never throws into the app', () => {
   // A value whose toString() throws must not escape span.end() — the baseline
   // (no SDK) is a silent NoopSpan, so a throw here would be a regression that
@@ -60,6 +88,48 @@ test('api loaded AFTER injection: late copy is still wired, app SDK wins handoff
   assert.deepStrictEqual(r.bridge, ['before'], 'bridge captures only the pre-registration span');
   assert.ok(r.app.includes('after'), 'the app SDK captures spans once it registers');
   assert.ok(!r.bridge.includes('after'), 'bridge must stop capturing after the late SDK registers');
+});
+
+test('active manual spans publish -mspan/ override and restore on unwind', () => {
+  // The bridge points traces_ctx_v1 at the innermost active manual span so
+  // OBI's eBPF client spans nest under it, then restores the enclosing span (or
+  // pops to none) as each scope unwinds. For nested startActiveSpan('outer' >
+  // 'inner'): override(outer), override(inner), restore(outer) on inner exit,
+  // pop on outer exit.
+  const r = runScenario('mspan-nesting');
+  assert.deepStrictEqual(r.mspan, ['outer', 'inner', 'outer', 'pop']);
+  assert.deepStrictEqual(r.bridge, ['inner', 'outer'], 'both spans are still captured');
+});
+
+test('the manual-span override carries the request fd when there is one', () => {
+  // traces_ctx_v1 is not populated for manual spans alone, so the fd is what
+  // gives the override the request's trace id to keep.
+  const r = runScenario('mspan-request-fd');
+  assert.deepStrictEqual(r.mspan, [52, 'pop', 48, 'pop']);
+  assert.strictEqual(r.fd, '0007');
+});
+
+test('a span ending in an async callback releases its override', () => {
+  // The override must not outlive the callback: nothing else clears it when no
+  // further callback runs (a timer in an idle process, work outside a request),
+  // so eBPF client spans and enriched log lines would keep carrying an ended
+  // span. The 'after' boundary pops it.
+  const r = runScenario('mspan-async-release');
+  assert.ok(r.mspan.includes('override'), 'the active span must publish an override');
+  assert.strictEqual(r.mspan[r.mspan.length - 1], 'pop', 'the last sentinel must release it');
+  assert.deepStrictEqual(r.bridge, ['job'], 'the span is still captured');
+});
+
+test('re-injection keeps the override hook after the context-refresh hook', () => {
+  // async_hooks fire in enable order; a re-injected fdextractor re-enables its
+  // '-ctx' hook, which would then erase the override every callback unless the
+  // bridge moves its own hook back last on re-injection.
+  const r = runScript('scenario_reinject.js');
+  assert.strictEqual(
+    r.stateInContinuation,
+    'manual',
+    'the override must run after the competing context-refresh hook'
+  );
 });
 
 test('native ESM app: bridge captures and the late SDK still wins the handoff', () => {
@@ -197,4 +267,27 @@ test('SDK registers after injection: bridge yields and the app SDK takes over', 
     !r.bridge.includes('after-new') && !r.bridge.includes('after-preacquired'),
     'bridge stops emitting once the app SDK is registered'
   );
+});
+
+test('span sentinel carries the request fd; no fd or a too-wide fd falls back to the plain form', () => {
+  const r = runScenario('request-fd');
+  assert.deepStrictEqual(r.bridge, ['in-request', 'no-request', 'fd-too-wide']);
+  assert.deepStrictEqual(r.fds, ['0042', null, null]);
+});
+
+test('bridge without fdextractor emits the plain sentinel', () => {
+  const r = runScenario('no-fdextractor');
+  assert.deepStrictEqual(r.bridge, ['s1']);
+  assert.deepStrictEqual(r.fds, [null]);
+});
+
+test('pooled span and trace ids stay unique and well-formed across pool refills', () => {
+  const r = runScenario('id-pool');
+  assert.strictEqual(r.ids.length, 400);
+  assert.strictEqual(new Set(r.ids.map((i) => i.tid)).size, 400, 'trace ids must not repeat');
+  assert.strictEqual(new Set(r.ids.map((i) => i.sid)).size, 400, 'span ids must not repeat');
+  for (const { tid, sid } of r.ids) {
+    assert.match(tid, /^[0-9a-f]{32}$/);
+    assert.match(sid, /^[0-9a-f]{16}$/);
+  }
 });

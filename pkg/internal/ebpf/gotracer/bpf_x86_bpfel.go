@@ -118,18 +118,6 @@ type BpfFdKey struct {
 	Pad     [4]uint8
 }
 
-type BpfFramerFuncInvocationT struct {
-	_               structs.HostLayout
-	FramerPtr       uint64
-	Tp              BpfTpInfoT
-	InitialN        int64
-	StreamId        uint32
-	S_port          uint16
-	D_port          uint16
-	ReservedPadding bool
-	Pad             [7]uint8
-}
-
 type BpfGoAddrKeyT struct {
 	_    structs.HostLayout
 	Pid  uint64
@@ -158,6 +146,20 @@ type BpfGoExecutableKeyT struct {
 	_   structs.HostLayout
 	Dev uint64
 	Ino uint64
+}
+
+type BpfGoH2FramerFuncInvocationT struct {
+	_                    structs.HostLayout
+	FramerPtr            uint64
+	Tp                   BpfTpInfoT
+	FrameOffset          int64
+	StreamId             uint32
+	S_port               uint16
+	D_port               uint16
+	FrameType            uint8
+	ReservedPadding      bool
+	AwaitingContinuation bool
+	Pad                  [5]uint8
 }
 
 type BpfGoH2OwnedStreamKeyT struct {
@@ -217,33 +219,30 @@ type BpfGrpcClientFuncInvocationT struct {
 	Flags           uint64
 }
 
-type BpfGrpcFramerFuncInvocationT struct {
-	_         structs.HostLayout
-	FramerPtr uint64
-	Tp        BpfTpInfoT
-	Offset    int64
-	S_port    uint16
-	D_port    uint16
-	StreamId  uint32
+type BpfGrpcConnectionT struct {
+	_            structs.HostLayout
+	Conn         BpfConnectionInfoT
+	Pid          uint32
+	SocketCookie uint64
 }
 
 type BpfGrpcFramesCtxT struct {
 	_               structs.HostLayout
 	PrevInfo        BpfHttp2GrpcRequestT
 	HasPrevInfo     uint8
-	FoundDataFrame  uint8
 	Iterations      uint8
 	TerminateSearch uint8
+	Pad             uint8
 	Pos             int32
 	SavedBufPos     int32
 	SavedStreamId   uint32
 	Args            BpfCallProtocolArgsT
 	Stream          BpfHttp2ConnStreamT
 	Huff            struct {
-		_    structs.HostLayout
-		At   uint16
-		Len  uint8
-		Next uint8
+		_   structs.HostLayout
+		At  uint16
+		Len uint8
+		Pad uint8
 	}
 	HuffScan struct {
 		_      structs.HostLayout
@@ -257,6 +256,19 @@ type BpfGrpcFramesCtxT struct {
 	}
 }
 
+type BpfGrpcH2HeaderObservationT struct {
+	_          structs.HostLayout
+	RequestKey BpfGoAddrKeyT
+	Stream     BpfGrpcH2OwnedStreamKeyT
+}
+
+type BpfGrpcH2OwnedStreamKeyT struct {
+	_            structs.HostLayout
+	SocketCookie uint64
+	Pid          uint32
+	StreamId     uint32
+}
+
 type BpfGrpcSrvFuncInvocationT struct {
 	_               structs.HostLayout
 	StartMonotimeNs uint64
@@ -265,12 +277,27 @@ type BpfGrpcSrvFuncInvocationT struct {
 	Tp              BpfTpInfoT
 }
 
+type BpfGrpcStreamKeyT struct {
+	_        structs.HostLayout
+	Conn     BpfGoAddrKeyT
+	StreamId uint32
+	Pad      uint32
+}
+
 type BpfGrpcTransportsT struct {
 	_    structs.HostLayout
 	Conn BpfConnectionInfoT
 	Type uint8
 	Pad  [3]uint8
 	Tp   BpfTpInfoT
+}
+
+type BpfH2CutFrameT struct {
+	_    structs.HostLayout
+	Skip uint32
+	Len  uint16
+	Pad  [2]uint8
+	Data [256]uint8
 }
 
 type BpfHttp2ConnInfoDataT struct {
@@ -306,6 +333,13 @@ type BpfHttp2GrpcRequestT struct {
 	Pid             BpfPidInfo
 	NewConnId       uint64
 	Tp              BpfTpInfoT
+}
+
+type BpfHttp2HeaderObservationT struct {
+	_         structs.HostLayout
+	RequestGo uint64
+	AppOwned  uint8
+	Pad       [7]uint8
 }
 
 type BpfHttp2OwnedStreamRefT struct {
@@ -469,7 +503,7 @@ type BpfObiCtxStackT struct {
 
 type BpfOffTableT struct {
 	_     structs.HostLayout
-	Table [134]uint64
+	Table [136]uint64
 }
 
 type BpfOtelSpanT struct {
@@ -508,9 +542,10 @@ type BpfOtelSpanT struct {
 }
 
 type BpfPendingH2InvocationT struct {
-	_       structs.HostLayout
-	Inv     BpfGrpcClientFuncInvocationT
-	ConnPtr uint64
+	_          structs.HostLayout
+	Inv        BpfGrpcClientFuncInvocationT
+	RequestKey BpfGoAddrKeyT
+	ConnPtr    uint64
 }
 
 type BpfPidConnectionInfoT struct {
@@ -766,7 +801,7 @@ type BpfTrackedConnectionT struct {
 type BpfTransportNewClientInvocationT struct {
 	_     structs.HostLayout
 	Inv   BpfGrpcClientFuncInvocationT
-	S_key BpfStreamKeyT
+	S_key BpfGrpcStreamKeyT
 }
 
 type BpfWriteSubsetInvocationT struct {
@@ -821,9 +856,18 @@ const (
 	BpfMapGoPersistConnWriter                                     = "go_persist_conn_writer"
 	BpfMapGoRuntimeMetricTargets                                  = "go_runtime_metric_targets"
 	BpfMapGoTraceMap                                              = "go_trace_map"
+	BpfMapGrpcAppOwnedWrites                                      = "grpc_app_owned_writes"
 	BpfMapGrpcConnPtrToConn                                       = "grpc_conn_ptr_to_conn"
 	BpfMapGrpcFramerInvocationMap                                 = "grpc_framer_invocation_map"
 	BpfMapGrpcFramesCtxMem                                        = "grpc_frames_ctx_mem"
+	BpfMapGrpcH2HeaderObservations                                = "grpc_h2_header_observations"
+	BpfMapGrpcH2OwnedStreams                                      = "grpc_h2_owned_streams"
+	BpfMapGrpcOwnedStreamByRequest                                = "grpc_owned_stream_by_request"
+	BpfMapGrpcOwnedWriterByRequest                                = "grpc_owned_writer_by_request"
+	BpfMapGrpcPendingHeaderByRequest                              = "grpc_pending_header_by_request"
+	BpfMapH2CutFrameStorage                                       = "h2_cut_frame_storage"
+	BpfMapH2CutFrames                                             = "h2_cut_frames"
+	BpfMapH2JoinedStorage                                         = "h2_joined_storage"
 	BpfMapH2TpHuffOutStorage                                      = "h2_tp_huff_out_storage"
 	BpfMapH2TpHuffWinStorage                                      = "h2_tp_huff_win_storage"
 	BpfMapHandledByGoConn                                         = "handled_by_go_conn"
@@ -833,6 +877,7 @@ const (
 	BpfMapHttp2OwnedStreamByFramer                                = "http2_owned_stream_by_framer"
 	BpfMapHttp2OwnedStreamByRequest                               = "http2_owned_stream_by_request"
 	BpfMapHttp2ReqMap                                             = "http2_req_map"
+	BpfMapHttp2ServerHeadersTp                                    = "http2_server_headers_tp"
 	BpfMapHttp2ServerRequestsTp                                   = "http2_server_requests_tp"
 	BpfMapHttpInfoMem                                             = "http_info_mem"
 	BpfMapHttpPreviousTraceIdStorage                              = "http_previous_trace_id_storage"
@@ -850,6 +895,7 @@ const (
 	BpfMapMysqlState                                              = "mysql_state"
 	BpfMapNewproc1                                                = "newproc1"
 	BpfMapNginxUpstream                                           = "nginx_upstream"
+	BpfMapNodeManualCtxShadow                                     = "node_manual_ctx_shadow"
 	BpfMapNodejsFdMap                                             = "nodejs_fd_map"
 	BpfMapObiCtxStackScratchStorage                               = "obi_ctx_stack_scratch_storage"
 	BpfMapObiCtxStacks                                            = "obi_ctx_stacks"
@@ -964,13 +1010,18 @@ const (
 	BpfProgObiUprobeGrpcFramerWriteHeaders                        = "obi_uprobe_grpcFramerWriteHeaders"
 	BpfProgObiUprobeGrpcFramerWriteHeadersReturns                 = "obi_uprobe_grpcFramerWriteHeaders_returns"
 	BpfProgObiUprobeGrpcControlBufferExecuteAndPut                = "obi_uprobe_grpc_controlBuffer_executeAndPut"
+	BpfProgObiUprobeGrpcLoopyWriterClientHeaderHandler            = "obi_uprobe_grpc_loopyWriter_clientHeaderHandler"
+	BpfProgObiUprobeGrpcLoopyWriterClientHeaderHandlerReturns     = "obi_uprobe_grpc_loopyWriter_clientHeaderHandler_returns"
 	BpfProgObiUprobeGrpcLoopyWriterOriginateStream                = "obi_uprobe_grpc_loopyWriter_originateStream"
+	BpfProgObiUprobeH2FramerWriteContinuation                     = "obi_uprobe_h2FramerWriteContinuation"
+	BpfProgObiUprobeH2FramerWriteContinuationReturns              = "obi_uprobe_h2FramerWriteContinuation_returns"
 	BpfProgObiUprobeHttp2ClientConnWriteHeader                    = "obi_uprobe_http2ClientConnWriteHeader"
 	BpfProgObiUprobeHttp2ClientStreamEncodeAndWriteHeaders        = "obi_uprobe_http2ClientStreamEncodeAndWriteHeaders"
 	BpfProgObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns = "obi_uprobe_http2ClientStreamEncodeAndWriteHeaders_returns"
 	BpfProgObiUprobeHttp2FramerEndWrite                           = "obi_uprobe_http2FramerEndWrite"
 	BpfProgObiUprobeHttp2FramerReservePadding                     = "obi_uprobe_http2FramerReservePadding"
 	BpfProgObiUprobeHttp2FramerReservePaddingVendored             = "obi_uprobe_http2FramerReservePadding_vendored"
+	BpfProgObiUprobeHttp2FramerWriteContinuation                  = "obi_uprobe_http2FramerWriteContinuation"
 	BpfProgObiUprobeHttp2FramerWriteHeadersReturns                = "obi_uprobe_http2FramerWriteHeaders_returns"
 	BpfProgObiUprobeHttp2ResponseWriterStateWriteHeader           = "obi_uprobe_http2ResponseWriterStateWriteHeader"
 	BpfProgObiUprobeHttp2RoundTrip                                = "obi_uprobe_http2RoundTrip"
@@ -978,6 +1029,7 @@ const (
 	BpfProgObiUprobeHttp2ServerProcessHeaders                     = "obi_uprobe_http2Server_processHeaders"
 	BpfProgObiUprobeHttp2WriteHeaders                             = "obi_uprobe_http2WriteHeaders"
 	BpfProgObiUprobeHttp2WriteHeadersVendored                     = "obi_uprobe_http2WriteHeaders_vendored"
+	BpfProgObiUprobeHttp2serverConnNewWriterAndRequestReturns     = "obi_uprobe_http2serverConn_newWriterAndRequest_returns"
 	BpfProgObiUprobeHttp2serverConnRunHandler                     = "obi_uprobe_http2serverConn_runHandler"
 	BpfProgObiUprobeJsonrpcReadRequestHeader                      = "obi_uprobe_jsonrpcReadRequestHeader"
 	BpfProgObiUprobeJsonrpcReadRequestHeaderReturns               = "obi_uprobe_jsonrpcReadRequestHeaderReturns"
@@ -1079,6 +1131,7 @@ const (
 	BpfVarG_bpfProbeWriteUserEnabled                              = "g_bpf_probe_write_user_enabled"
 	BpfVarG_bpfTraceparentEnabled                                 = "g_bpf_traceparent_enabled"
 	BpfVarG_goH2WriteFailStep                                     = "g_go_h2_write_fail_step"
+	BpfVarG_tracesCtxV1Enabled                                    = "g_traces_ctx_v1_enabled"
 	BpfVarHighRequestVolume                                       = "high_request_volume"
 	BpfVarHttpMaxCapturedBytes                                    = "http_max_captured_bytes"
 	BpfVarIp4ip6Prefix                                            = "ip4ip6_prefix"
@@ -1188,13 +1241,18 @@ type BpfProgramSpecs struct {
 	ObiUprobeGrpcFramerWriteHeaders                        *ebpf.ProgramSpec `ebpf:"obi_uprobe_grpcFramerWriteHeaders"`
 	ObiUprobeGrpcFramerWriteHeadersReturns                 *ebpf.ProgramSpec `ebpf:"obi_uprobe_grpcFramerWriteHeaders_returns"`
 	ObiUprobeGrpcControlBufferExecuteAndPut                *ebpf.ProgramSpec `ebpf:"obi_uprobe_grpc_controlBuffer_executeAndPut"`
+	ObiUprobeGrpcLoopyWriterClientHeaderHandler            *ebpf.ProgramSpec `ebpf:"obi_uprobe_grpc_loopyWriter_clientHeaderHandler"`
+	ObiUprobeGrpcLoopyWriterClientHeaderHandlerReturns     *ebpf.ProgramSpec `ebpf:"obi_uprobe_grpc_loopyWriter_clientHeaderHandler_returns"`
 	ObiUprobeGrpcLoopyWriterOriginateStream                *ebpf.ProgramSpec `ebpf:"obi_uprobe_grpc_loopyWriter_originateStream"`
+	ObiUprobeH2FramerWriteContinuation                     *ebpf.ProgramSpec `ebpf:"obi_uprobe_h2FramerWriteContinuation"`
+	ObiUprobeH2FramerWriteContinuationReturns              *ebpf.ProgramSpec `ebpf:"obi_uprobe_h2FramerWriteContinuation_returns"`
 	ObiUprobeHttp2ClientConnWriteHeader                    *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ClientConnWriteHeader"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeaders        *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders_returns"`
 	ObiUprobeHttp2FramerEndWrite                           *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerEndWrite"`
 	ObiUprobeHttp2FramerReservePadding                     *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerReservePadding"`
 	ObiUprobeHttp2FramerReservePaddingVendored             *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerReservePadding_vendored"`
+	ObiUprobeHttp2FramerWriteContinuation                  *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerWriteContinuation"`
 	ObiUprobeHttp2FramerWriteHeadersReturns                *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2FramerWriteHeaders_returns"`
 	ObiUprobeHttp2ResponseWriterStateWriteHeader           *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2ResponseWriterStateWriteHeader"`
 	ObiUprobeHttp2RoundTrip                                *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2RoundTrip"`
@@ -1202,6 +1260,7 @@ type BpfProgramSpecs struct {
 	ObiUprobeHttp2ServerProcessHeaders                     *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2Server_processHeaders"`
 	ObiUprobeHttp2WriteHeaders                             *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2WriteHeaders"`
 	ObiUprobeHttp2WriteHeadersVendored                     *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2WriteHeaders_vendored"`
+	ObiUprobeHttp2serverConnNewWriterAndRequestReturns     *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2serverConn_newWriterAndRequest_returns"`
 	ObiUprobeHttp2serverConnRunHandler                     *ebpf.ProgramSpec `ebpf:"obi_uprobe_http2serverConn_runHandler"`
 	ObiUprobeJsonrpcReadRequestHeader                      *ebpf.ProgramSpec `ebpf:"obi_uprobe_jsonrpcReadRequestHeader"`
 	ObiUprobeJsonrpcReadRequestHeaderReturns               *ebpf.ProgramSpec `ebpf:"obi_uprobe_jsonrpcReadRequestHeaderReturns"`
@@ -1321,9 +1380,18 @@ type BpfMapSpecs struct {
 	GoPersistConnWriter            *ebpf.MapSpec `ebpf:"go_persist_conn_writer"`
 	GoRuntimeMetricTargets         *ebpf.MapSpec `ebpf:"go_runtime_metric_targets"`
 	GoTraceMap                     *ebpf.MapSpec `ebpf:"go_trace_map"`
+	GrpcAppOwnedWrites             *ebpf.MapSpec `ebpf:"grpc_app_owned_writes"`
 	GrpcConnPtrToConn              *ebpf.MapSpec `ebpf:"grpc_conn_ptr_to_conn"`
 	GrpcFramerInvocationMap        *ebpf.MapSpec `ebpf:"grpc_framer_invocation_map"`
 	GrpcFramesCtxMem               *ebpf.MapSpec `ebpf:"grpc_frames_ctx_mem"`
+	GrpcH2HeaderObservations       *ebpf.MapSpec `ebpf:"grpc_h2_header_observations"`
+	GrpcH2OwnedStreams             *ebpf.MapSpec `ebpf:"grpc_h2_owned_streams"`
+	GrpcOwnedStreamByRequest       *ebpf.MapSpec `ebpf:"grpc_owned_stream_by_request"`
+	GrpcOwnedWriterByRequest       *ebpf.MapSpec `ebpf:"grpc_owned_writer_by_request"`
+	GrpcPendingHeaderByRequest     *ebpf.MapSpec `ebpf:"grpc_pending_header_by_request"`
+	H2CutFrameStorage              *ebpf.MapSpec `ebpf:"h2_cut_frame_storage"`
+	H2CutFrames                    *ebpf.MapSpec `ebpf:"h2_cut_frames"`
+	H2JoinedStorage                *ebpf.MapSpec `ebpf:"h2_joined_storage"`
 	H2TpHuffOutStorage             *ebpf.MapSpec `ebpf:"h2_tp_huff_out_storage"`
 	H2TpHuffWinStorage             *ebpf.MapSpec `ebpf:"h2_tp_huff_win_storage"`
 	HandledByGoConn                *ebpf.MapSpec `ebpf:"handled_by_go_conn"`
@@ -1333,6 +1401,7 @@ type BpfMapSpecs struct {
 	Http2OwnedStreamByFramer       *ebpf.MapSpec `ebpf:"http2_owned_stream_by_framer"`
 	Http2OwnedStreamByRequest      *ebpf.MapSpec `ebpf:"http2_owned_stream_by_request"`
 	Http2ReqMap                    *ebpf.MapSpec `ebpf:"http2_req_map"`
+	Http2ServerHeadersTp           *ebpf.MapSpec `ebpf:"http2_server_headers_tp"`
 	Http2ServerRequestsTp          *ebpf.MapSpec `ebpf:"http2_server_requests_tp"`
 	HttpInfoMem                    *ebpf.MapSpec `ebpf:"http_info_mem"`
 	HttpPreviousTraceIdStorage     *ebpf.MapSpec `ebpf:"http_previous_trace_id_storage"`
@@ -1350,6 +1419,7 @@ type BpfMapSpecs struct {
 	MysqlState                     *ebpf.MapSpec `ebpf:"mysql_state"`
 	Newproc1                       *ebpf.MapSpec `ebpf:"newproc1"`
 	NginxUpstream                  *ebpf.MapSpec `ebpf:"nginx_upstream"`
+	NodeManualCtxShadow            *ebpf.MapSpec `ebpf:"node_manual_ctx_shadow"`
 	NodejsFdMap                    *ebpf.MapSpec `ebpf:"nodejs_fd_map"`
 	ObiCtxStackScratchStorage      *ebpf.MapSpec `ebpf:"obi_ctx_stack_scratch_storage"`
 	ObiCtxStacks                   *ebpf.MapSpec `ebpf:"obi_ctx_stacks"`
@@ -1446,6 +1516,7 @@ type BpfVariableSpecs struct {
 	G_bpfProbeWriteUserEnabled *ebpf.VariableSpec `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.VariableSpec `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.VariableSpec `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.VariableSpec `ebpf:"g_traces_ctx_v1_enabled"`
 	HighRequestVolume          *ebpf.VariableSpec `ebpf:"high_request_volume"`
 	HttpMaxCapturedBytes       *ebpf.VariableSpec `ebpf:"http_max_captured_bytes"`
 	Ip4ip6Prefix               *ebpf.VariableSpec `ebpf:"ip4ip6_prefix"`
@@ -1521,9 +1592,18 @@ type BpfMaps struct {
 	GoPersistConnWriter            *ebpf.Map `ebpf:"go_persist_conn_writer"`
 	GoRuntimeMetricTargets         *ebpf.Map `ebpf:"go_runtime_metric_targets"`
 	GoTraceMap                     *ebpf.Map `ebpf:"go_trace_map"`
+	GrpcAppOwnedWrites             *ebpf.Map `ebpf:"grpc_app_owned_writes"`
 	GrpcConnPtrToConn              *ebpf.Map `ebpf:"grpc_conn_ptr_to_conn"`
 	GrpcFramerInvocationMap        *ebpf.Map `ebpf:"grpc_framer_invocation_map"`
 	GrpcFramesCtxMem               *ebpf.Map `ebpf:"grpc_frames_ctx_mem"`
+	GrpcH2HeaderObservations       *ebpf.Map `ebpf:"grpc_h2_header_observations"`
+	GrpcH2OwnedStreams             *ebpf.Map `ebpf:"grpc_h2_owned_streams"`
+	GrpcOwnedStreamByRequest       *ebpf.Map `ebpf:"grpc_owned_stream_by_request"`
+	GrpcOwnedWriterByRequest       *ebpf.Map `ebpf:"grpc_owned_writer_by_request"`
+	GrpcPendingHeaderByRequest     *ebpf.Map `ebpf:"grpc_pending_header_by_request"`
+	H2CutFrameStorage              *ebpf.Map `ebpf:"h2_cut_frame_storage"`
+	H2CutFrames                    *ebpf.Map `ebpf:"h2_cut_frames"`
+	H2JoinedStorage                *ebpf.Map `ebpf:"h2_joined_storage"`
 	H2TpHuffOutStorage             *ebpf.Map `ebpf:"h2_tp_huff_out_storage"`
 	H2TpHuffWinStorage             *ebpf.Map `ebpf:"h2_tp_huff_win_storage"`
 	HandledByGoConn                *ebpf.Map `ebpf:"handled_by_go_conn"`
@@ -1533,6 +1613,7 @@ type BpfMaps struct {
 	Http2OwnedStreamByFramer       *ebpf.Map `ebpf:"http2_owned_stream_by_framer"`
 	Http2OwnedStreamByRequest      *ebpf.Map `ebpf:"http2_owned_stream_by_request"`
 	Http2ReqMap                    *ebpf.Map `ebpf:"http2_req_map"`
+	Http2ServerHeadersTp           *ebpf.Map `ebpf:"http2_server_headers_tp"`
 	Http2ServerRequestsTp          *ebpf.Map `ebpf:"http2_server_requests_tp"`
 	HttpInfoMem                    *ebpf.Map `ebpf:"http_info_mem"`
 	HttpPreviousTraceIdStorage     *ebpf.Map `ebpf:"http_previous_trace_id_storage"`
@@ -1550,6 +1631,7 @@ type BpfMaps struct {
 	MysqlState                     *ebpf.Map `ebpf:"mysql_state"`
 	Newproc1                       *ebpf.Map `ebpf:"newproc1"`
 	NginxUpstream                  *ebpf.Map `ebpf:"nginx_upstream"`
+	NodeManualCtxShadow            *ebpf.Map `ebpf:"node_manual_ctx_shadow"`
 	NodejsFdMap                    *ebpf.Map `ebpf:"nodejs_fd_map"`
 	ObiCtxStackScratchStorage      *ebpf.Map `ebpf:"obi_ctx_stack_scratch_storage"`
 	ObiCtxStacks                   *ebpf.Map `ebpf:"obi_ctx_stacks"`
@@ -1656,9 +1738,18 @@ func (m *BpfMaps) Close() error {
 		m.GoPersistConnWriter,
 		m.GoRuntimeMetricTargets,
 		m.GoTraceMap,
+		m.GrpcAppOwnedWrites,
 		m.GrpcConnPtrToConn,
 		m.GrpcFramerInvocationMap,
 		m.GrpcFramesCtxMem,
+		m.GrpcH2HeaderObservations,
+		m.GrpcH2OwnedStreams,
+		m.GrpcOwnedStreamByRequest,
+		m.GrpcOwnedWriterByRequest,
+		m.GrpcPendingHeaderByRequest,
+		m.H2CutFrameStorage,
+		m.H2CutFrames,
+		m.H2JoinedStorage,
 		m.H2TpHuffOutStorage,
 		m.H2TpHuffWinStorage,
 		m.HandledByGoConn,
@@ -1668,6 +1759,7 @@ func (m *BpfMaps) Close() error {
 		m.Http2OwnedStreamByFramer,
 		m.Http2OwnedStreamByRequest,
 		m.Http2ReqMap,
+		m.Http2ServerHeadersTp,
 		m.Http2ServerRequestsTp,
 		m.HttpInfoMem,
 		m.HttpPreviousTraceIdStorage,
@@ -1685,6 +1777,7 @@ func (m *BpfMaps) Close() error {
 		m.MysqlState,
 		m.Newproc1,
 		m.NginxUpstream,
+		m.NodeManualCtxShadow,
 		m.NodejsFdMap,
 		m.ObiCtxStackScratchStorage,
 		m.ObiCtxStacks,
@@ -1782,6 +1875,7 @@ type BpfVariables struct {
 	G_bpfProbeWriteUserEnabled *ebpf.Variable `ebpf:"g_bpf_probe_write_user_enabled"`
 	G_bpfTraceparentEnabled    *ebpf.Variable `ebpf:"g_bpf_traceparent_enabled"`
 	G_goH2WriteFailStep        *ebpf.Variable `ebpf:"g_go_h2_write_fail_step"`
+	G_tracesCtxV1Enabled       *ebpf.Variable `ebpf:"g_traces_ctx_v1_enabled"`
 	HighRequestVolume          *ebpf.Variable `ebpf:"high_request_volume"`
 	HttpMaxCapturedBytes       *ebpf.Variable `ebpf:"http_max_captured_bytes"`
 	Ip4ip6Prefix               *ebpf.Variable `ebpf:"ip4ip6_prefix"`
@@ -1853,13 +1947,18 @@ type BpfPrograms struct {
 	ObiUprobeGrpcFramerWriteHeaders                        *ebpf.Program `ebpf:"obi_uprobe_grpcFramerWriteHeaders"`
 	ObiUprobeGrpcFramerWriteHeadersReturns                 *ebpf.Program `ebpf:"obi_uprobe_grpcFramerWriteHeaders_returns"`
 	ObiUprobeGrpcControlBufferExecuteAndPut                *ebpf.Program `ebpf:"obi_uprobe_grpc_controlBuffer_executeAndPut"`
+	ObiUprobeGrpcLoopyWriterClientHeaderHandler            *ebpf.Program `ebpf:"obi_uprobe_grpc_loopyWriter_clientHeaderHandler"`
+	ObiUprobeGrpcLoopyWriterClientHeaderHandlerReturns     *ebpf.Program `ebpf:"obi_uprobe_grpc_loopyWriter_clientHeaderHandler_returns"`
 	ObiUprobeGrpcLoopyWriterOriginateStream                *ebpf.Program `ebpf:"obi_uprobe_grpc_loopyWriter_originateStream"`
+	ObiUprobeH2FramerWriteContinuation                     *ebpf.Program `ebpf:"obi_uprobe_h2FramerWriteContinuation"`
+	ObiUprobeH2FramerWriteContinuationReturns              *ebpf.Program `ebpf:"obi_uprobe_h2FramerWriteContinuation_returns"`
 	ObiUprobeHttp2ClientConnWriteHeader                    *ebpf.Program `ebpf:"obi_uprobe_http2ClientConnWriteHeader"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeaders        *ebpf.Program `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders"`
 	ObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns *ebpf.Program `ebpf:"obi_uprobe_http2ClientStreamEncodeAndWriteHeaders_returns"`
 	ObiUprobeHttp2FramerEndWrite                           *ebpf.Program `ebpf:"obi_uprobe_http2FramerEndWrite"`
 	ObiUprobeHttp2FramerReservePadding                     *ebpf.Program `ebpf:"obi_uprobe_http2FramerReservePadding"`
 	ObiUprobeHttp2FramerReservePaddingVendored             *ebpf.Program `ebpf:"obi_uprobe_http2FramerReservePadding_vendored"`
+	ObiUprobeHttp2FramerWriteContinuation                  *ebpf.Program `ebpf:"obi_uprobe_http2FramerWriteContinuation"`
 	ObiUprobeHttp2FramerWriteHeadersReturns                *ebpf.Program `ebpf:"obi_uprobe_http2FramerWriteHeaders_returns"`
 	ObiUprobeHttp2ResponseWriterStateWriteHeader           *ebpf.Program `ebpf:"obi_uprobe_http2ResponseWriterStateWriteHeader"`
 	ObiUprobeHttp2RoundTrip                                *ebpf.Program `ebpf:"obi_uprobe_http2RoundTrip"`
@@ -1867,6 +1966,7 @@ type BpfPrograms struct {
 	ObiUprobeHttp2ServerProcessHeaders                     *ebpf.Program `ebpf:"obi_uprobe_http2Server_processHeaders"`
 	ObiUprobeHttp2WriteHeaders                             *ebpf.Program `ebpf:"obi_uprobe_http2WriteHeaders"`
 	ObiUprobeHttp2WriteHeadersVendored                     *ebpf.Program `ebpf:"obi_uprobe_http2WriteHeaders_vendored"`
+	ObiUprobeHttp2serverConnNewWriterAndRequestReturns     *ebpf.Program `ebpf:"obi_uprobe_http2serverConn_newWriterAndRequest_returns"`
 	ObiUprobeHttp2serverConnRunHandler                     *ebpf.Program `ebpf:"obi_uprobe_http2serverConn_runHandler"`
 	ObiUprobeJsonrpcReadRequestHeader                      *ebpf.Program `ebpf:"obi_uprobe_jsonrpcReadRequestHeader"`
 	ObiUprobeJsonrpcReadRequestHeaderReturns               *ebpf.Program `ebpf:"obi_uprobe_jsonrpcReadRequestHeaderReturns"`
@@ -1996,13 +2096,18 @@ func (p *BpfPrograms) Close() error {
 		p.ObiUprobeGrpcFramerWriteHeaders,
 		p.ObiUprobeGrpcFramerWriteHeadersReturns,
 		p.ObiUprobeGrpcControlBufferExecuteAndPut,
+		p.ObiUprobeGrpcLoopyWriterClientHeaderHandler,
+		p.ObiUprobeGrpcLoopyWriterClientHeaderHandlerReturns,
 		p.ObiUprobeGrpcLoopyWriterOriginateStream,
+		p.ObiUprobeH2FramerWriteContinuation,
+		p.ObiUprobeH2FramerWriteContinuationReturns,
 		p.ObiUprobeHttp2ClientConnWriteHeader,
 		p.ObiUprobeHttp2ClientStreamEncodeAndWriteHeaders,
 		p.ObiUprobeHttp2ClientStreamEncodeAndWriteHeadersReturns,
 		p.ObiUprobeHttp2FramerEndWrite,
 		p.ObiUprobeHttp2FramerReservePadding,
 		p.ObiUprobeHttp2FramerReservePaddingVendored,
+		p.ObiUprobeHttp2FramerWriteContinuation,
 		p.ObiUprobeHttp2FramerWriteHeadersReturns,
 		p.ObiUprobeHttp2ResponseWriterStateWriteHeader,
 		p.ObiUprobeHttp2RoundTrip,
@@ -2010,6 +2115,7 @@ func (p *BpfPrograms) Close() error {
 		p.ObiUprobeHttp2ServerProcessHeaders,
 		p.ObiUprobeHttp2WriteHeaders,
 		p.ObiUprobeHttp2WriteHeadersVendored,
+		p.ObiUprobeHttp2serverConnNewWriterAndRequestReturns,
 		p.ObiUprobeHttp2serverConnRunHandler,
 		p.ObiUprobeJsonrpcReadRequestHeader,
 		p.ObiUprobeJsonrpcReadRequestHeaderReturns,

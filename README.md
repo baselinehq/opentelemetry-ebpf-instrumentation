@@ -27,6 +27,8 @@ OBI's emission contract is defined as a [Weaver](https://github.com/open-telemet
 
 It extends the upstream [OpenTelemetry semantic conventions](https://github.com/open-telemetry/semantic-conventions) registry with the metrics, spans, and attributes OBI emits that are not covered upstream.
 
+See the [telemetry compatibility contract](./TELEMETRY.md) for the stable v1 surface and its guarantees. The [generated telemetry reference](./site/docs/README.md) lists the registry's attributes, metrics, spans, and stability classifications.
+
 ## How to start developing
 
 Requirements:
@@ -55,6 +57,8 @@ Below are quick reference instructions for getting OBI up and running with binar
 
 When upgrading an existing configuration, follow the
 [Config v1 to v2 migration guide](devdocs/config/version-2.0/migration.md).
+Config v1 is frozen for backward compatibility and does not receive bug fixes
+or new features. Migrate to Config v2 to receive configuration improvements.
 Use Config v2 only with a release whose notes explicitly enable it for your
 standalone or Collector deployment mode.
 
@@ -162,7 +166,6 @@ tar -xzf obi-v${VERSION}-linux-${ARCH}.tar.gz
 
 # The archive contains:
 # - obi: Main OBI binary
-# - k8s-cache: Kubernetes cache binary
 # - LICENSE: Project license
 # - NOTICE: Legal notices
 # - NOTICES/: Third-party licenses and attributions
@@ -209,7 +212,7 @@ jq '.components[] | {name, version}' obi-java-agent-v${VERSION}.cyclonedx.json
 
 #### Install to System
 
-After extracting the archive, you can install the binaries to a location in your PATH so they can be used from any directory.
+After extracting the archive, you can install the binary to a location in your PATH so it can be used from any directory.
 
 The Java agent is embedded in the `obi` binary, so no separate Java agent JAR installation is required.
 At runtime, OBI extracts the embedded Java agent into the user cache directory (typically `$XDG_CACHE_HOME/obi/java` or `~/.cache/obi/java`) and reuses a checksum-named cached file across runs.
@@ -217,9 +220,8 @@ At runtime, OBI extracts the embedded Java agent into the user cache directory (
 The following example installs to `/usr/local/bin`, which is a standard location on most Linux distributions. You can install to any other directory in your PATH:
 
 ```bash
-# Move binaries to a directory in your PATH
+# Move the binary to a directory in your PATH
 sudo cp obi /usr/local/bin/
-sudo cp k8s-cache /usr/local/bin/
 
 # Verify installation
 obi --version

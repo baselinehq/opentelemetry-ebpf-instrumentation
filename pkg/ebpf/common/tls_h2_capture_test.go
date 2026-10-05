@@ -1,3 +1,6 @@
+// Copyright The OpenTelemetry Authors
+// SPDX-License-Identifier: Apache-2.0
+
 package ebpfcommon
 
 import (
@@ -7,14 +10,15 @@ import (
 	"testing"
 	"unsafe"
 
+	"github.com/stretchr/testify/require"
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
+
 	"go.opentelemetry.io/obi/pkg/appolly/app/request"
 	"go.opentelemetry.io/obi/pkg/appolly/services"
 	"go.opentelemetry.io/obi/pkg/config"
 	ebpfhttp "go.opentelemetry.io/obi/pkg/ebpf/common/http"
 	"go.opentelemetry.io/obi/pkg/ebpf/ringbuf"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/hpack"
 )
 
 func h2CaptureContext(t *testing.T) (*EBPFParseContext, *[]request.Span) {
@@ -22,9 +26,11 @@ func h2CaptureContext(t *testing.T) (*EBPFParseContext, *[]request.Span) {
 	t.Cleanup(ctx.Close)
 	var spans []request.Span
 	ctx.emitSpans = func(s []request.Span) { spans = append(spans, s...) }
-	ctx.httpEnricher = ebpfhttp.NewHTTPEnricher(config.EnrichmentConfig{Enabled: true,
-		Policy: config.HTTPParsingPolicy{DefaultAction: config.HTTPParsingDefaultAction{Headers: config.HTTPParsingActionExclude}},
-		Rules:  []config.HTTPParsingRule{{Action: config.HTTPParsingActionInclude, Type: config.HTTPParsingRuleTypeHeaders, Scope: config.HTTPParsingScopeRequest, Match: config.HTTPParsingMatch{Patterns: []services.GlobAttr{services.NewGlob("x-costgraph-*")}}}}})
+	ctx.httpEnricher = ebpfhttp.NewHTTPEnricher(config.EnrichmentConfig{
+		Enabled: true,
+		Policy:  config.HTTPParsingPolicy{DefaultAction: config.HTTPParsingDefaultAction{Headers: config.HTTPParsingActionExclude}},
+		Rules:   []config.HTTPParsingRule{{Action: config.HTTPParsingActionInclude, Type: config.HTTPParsingRuleTypeHeaders, Scope: config.HTTPParsingScopeRequest, Match: config.HTTPParsingMatch{Patterns: []services.GlobAttr{services.NewGlob("x-costgraph-*")}}}},
+	})
 	return ctx, &spans
 }
 
@@ -40,6 +46,7 @@ func newH2Writer() *h2Writer {
 	w.enc = hpack.NewEncoder(&w.block)
 	return w
 }
+
 func (w *h2Writer) headers(t *testing.T, id uint32, end, split bool, fields ...string) int64 {
 	before := w.wire.Len()
 	w.block.Reset()
@@ -56,6 +63,7 @@ func (w *h2Writer) headers(t *testing.T, id uint32, end, split bool, fields ...s
 	}
 	return int64(w.wire.Len() - before)
 }
+
 func feedH2(t *testing.T, ctx *EBPFParseContext, c *tlsH2Capture, dir uint8, data []byte, fragment int) {
 	for len(data) > 0 {
 		n := min(fragment, len(data))
@@ -63,6 +71,7 @@ func feedH2(t *testing.T, ctx *EBPFParseContext, c *tlsH2Capture, dir uint8, dat
 		data = data[n:]
 	}
 }
+
 func TestTLSH2MultiplexingCompressionContinuationAndPadding(t *testing.T) {
 	ctx, spans := h2CaptureContext(t)
 	c := newTLSH2Capture(&tlsH2Chunk{Generation: 1, HostPID: 77, Conn: goHTTPClientTestConnection()})
@@ -100,6 +109,7 @@ func TestTLSH2MultiplexingCompressionContinuationAndPadding(t *testing.T) {
 	}
 	require.Empty(t, c.streams)
 }
+
 func h2Record(t *testing.T, e tlsH2Chunk, data []byte) *ringbuf.Record {
 	e.Type = tlsH2Event
 	e.Len = uint32(len(data))
@@ -108,6 +118,7 @@ func h2Record(t *testing.T, e tlsH2Chunk, data []byte) *ringbuf.Record {
 	b.Write(data)
 	return &ringbuf.Record{RawSample: b.Bytes()}
 }
+
 func TestTLSH2LossGenerationAndProcessIsolation(t *testing.T) {
 	require.Equal(t, uintptr(72), unsafe.Sizeof(tlsH2Chunk{}))
 	ctx, _ := h2CaptureContext(t)
@@ -140,8 +151,8 @@ func TestTLSH2LossGenerationAndProcessIsolation(t *testing.T) {
 	_, _, err = readTLSH2Capture(ctx, h2Record(t, e, nil))
 	require.NoError(t, err)
 	require.False(t, ctx.tlsH2Captures.Contains(tlsH2ConnectionKey(e.HostPID, e.Conn)))
-
 }
+
 func TestTLSH2RejectsUnknownHPACKAndIncompleteStreams(t *testing.T) {
 	ctx, spans := h2CaptureContext(t)
 	c := newTLSH2Capture(&tlsH2Chunk{Generation: 1})
