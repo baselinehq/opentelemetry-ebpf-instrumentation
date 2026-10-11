@@ -45,6 +45,10 @@ func TestExchangePreservesIdentityHeadersAndMeasuredBytes(t *testing.T) {
 	if mustExchange(t, &s).RequestMessageBytes != 0 {
 		t.Fatal("missing measured bytes must not fall back to body length")
 	}
+	s.Type, s.Statement = request.EventTypeSQLClient, "BEGIN;SELECT secret FROM users"
+	if got, ok := exchangeFromSpan(&s); ok {
+		t.Fatalf("database span became an http exchange: %+v", got)
+	}
 }
 
 func TestExchangeServerAddress(t *testing.T) {

@@ -157,13 +157,6 @@ func buildConfig(headerPrefixes []string) (*obi.Config, error) {
 // Exchanges returns the single-consumer stream. Drain it while Run executes.
 func (c *Capture) Exchanges() <-chan []Exchange { return c.records }
 
-func (c *Capture) Covers(pid uint32) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	_, ok := c.allowed[int32(pid)]
-	return ok
-}
-
 // Run discovers processes before the tracers initialize their PID filters.
 func (c *Capture) Run(ctx context.Context) {
 	spans := c.spans.Subscribe()

@@ -42,17 +42,20 @@ type Exchange struct {
 }
 
 func exchangeFromSpan(s *request.Span) (Exchange, bool) {
-	if s.Type == request.EventTypeDNS {
+	switch s.Type {
+	case request.EventTypeDNS:
 		return dnsExchange(s)
+	case request.EventTypeHTTP, request.EventTypeHTTPClient, request.EventTypeGRPC, request.EventTypeGRPCClient:
+		return Exchange{
+			Kind: ExchangeHTTP, Client: s.IsClientSpan(), HostPID: uint32(s.Pid.HostPID),
+			SrcIP: s.Peer, DstIP: s.Host, DstPort: s.HostPort,
+			ServerAddress:        serverAddress(s.Statement),
+			RequestHeaders:       s.RequestHeaders,
+			RequestMessageBytes:  s.RequestMessageBytes,
+			ResponseMessageBytes: s.ResponseMessageBytes,
+		}, true
 	}
-	return Exchange{
-		Kind: ExchangeHTTP, Client: s.IsClientSpan(), HostPID: uint32(s.Pid.HostPID),
-		SrcIP: s.Peer, DstIP: s.Host, DstPort: s.HostPort,
-		ServerAddress:        serverAddress(s.Statement),
-		RequestHeaders:       s.RequestHeaders,
-		RequestMessageBytes:  s.RequestMessageBytes,
-		ResponseMessageBytes: s.ResponseMessageBytes,
-	}, true
+	return Exchange{}, false
 }
 
 func dnsExchange(s *request.Span) (Exchange, bool) {
