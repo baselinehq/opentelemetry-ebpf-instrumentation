@@ -78,7 +78,7 @@ func TestTLSH2MultiplexingCompressionContinuationAndPadding(t *testing.T) {
 	send, recv := newH2Writer(), newH2Writer()
 	send.wire.WriteString(http2.ClientPreface)
 	require.NoError(t, send.fr.WriteSettings())
-	req1 := send.headers(t, 1, false, true, ":method", "POST", ":path", "/one", "x-costgraph-case", "alpha", "x-costgraph-team", "shared")
+	req1 := send.headers(t, 1, false, true, ":method", "POST", ":path", "/one", ":authority", "api.openai.com:443", "x-costgraph-case", "alpha", "x-costgraph-team", "shared")
 	req3 := send.headers(t, 3, true, false, ":method", "POST", ":path", "/two", "x-costgraph-case", "beta", "x-costgraph-team", "shared")
 	before := send.wire.Len()
 	require.NoError(t, send.fr.WriteDataPadded(1, true, []byte("abc"), make([]byte, 7)))
@@ -97,6 +97,7 @@ func TestTLSH2MultiplexingCompressionContinuationAndPadding(t *testing.T) {
 	for _, s := range *spans {
 		switch http.Header(s.RequestHeaders).Get("X-Costgraph-Case") {
 		case "alpha":
+			require.Equal(t, "https;api.openai.com:443", s.Statement)
 			require.Equal(t, req1, s.RequestMessageBytes)
 			require.Equal(t, resp1, s.ResponseMessageBytes)
 		case "beta":
@@ -108,6 +109,22 @@ func TestTLSH2MultiplexingCompressionContinuationAndPadding(t *testing.T) {
 		require.Equal(t, "shared", http.Header(s.RequestHeaders).Get("X-Costgraph-Team"))
 	}
 	require.Empty(t, c.streams)
+}
+
+func TestTLSH2EmitsUntaggedStreams(t *testing.T) {
+	ctx, spans := h2CaptureContext(t)
+	c := newTLSH2Capture(&tlsH2Chunk{Generation: 1, HostPID: 77, Conn: goHTTPClientTestConnection()})
+	send, recv := newH2Writer(), newH2Writer()
+	send.wire.WriteString(http2.ClientPreface)
+	require.NoError(t, send.fr.WriteSettings())
+	send.headers(t, 1, true, false, ":method", "GET", ":path", "/v1/models", ":authority", "api.openai.com")
+	require.NoError(t, recv.fr.WriteSettings())
+	recv.headers(t, 1, true, false, ":status", "200")
+	feedH2(t, ctx, c, directionSend, send.wire.Bytes(), 64)
+	feedH2(t, ctx, c, directionRecv, recv.wire.Bytes(), 64)
+	require.Len(t, *spans, 1)
+	require.Empty(t, (*spans)[0].RequestHeaders)
+	require.Equal(t, "https;api.openai.com", (*spans)[0].Statement)
 }
 
 func h2Record(t *testing.T, e tlsH2Chunk, data []byte) *ringbuf.Record {

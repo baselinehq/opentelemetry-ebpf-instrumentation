@@ -132,6 +132,7 @@ func buildConfig(headerPrefixes []string) (*obi.Config, error) {
 	cfg.EBPF.ContextPropagation = config.ContextPropagationDisabled
 	cfg.EBPF.MaxTransactionTime = 2 * time.Minute
 	cfg.EBPF.HTTPRequestTimeout = 30 * time.Second
+	cfg.EBPF.DNSRequestTimeout = 5 * time.Second
 	cfg.EBPF.GoHTTPClientBufferTimeout = 5 * time.Second
 	cfg.ShutdownTimeout = 10 * time.Second
 
@@ -155,6 +156,13 @@ func buildConfig(headerPrefixes []string) (*obi.Config, error) {
 
 // Exchanges returns the single-consumer stream. Drain it while Run executes.
 func (c *Capture) Exchanges() <-chan []Exchange { return c.records }
+
+func (c *Capture) Covers(pid uint32) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.allowed[int32(pid)]
+	return ok
+}
 
 // Run discovers processes before the tracers initialize their PID filters.
 func (c *Capture) Run(ctx context.Context) {
