@@ -132,6 +132,7 @@ func buildConfig(headerPrefixes []string) (*obi.Config, error) {
 	cfg.EBPF.ContextPropagation = config.ContextPropagationDisabled
 	cfg.EBPF.MaxTransactionTime = 2 * time.Minute
 	cfg.EBPF.HTTPRequestTimeout = 30 * time.Second
+	cfg.EBPF.DNSRequestTimeout = 5 * time.Second
 	cfg.EBPF.GoHTTPClientBufferTimeout = 5 * time.Second
 	cfg.ShutdownTimeout = 10 * time.Second
 

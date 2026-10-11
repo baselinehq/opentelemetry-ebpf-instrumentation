@@ -27,4 +27,7 @@ func TestCaptureConfigAllowsReaderProgress(t *testing.T) {
 	if cfg.EBPF.BatchTimeout <= 0 {
 		t.Errorf("BatchTimeout = %v: partial span batches never flush", cfg.EBPF.BatchTimeout)
 	}
+	if cfg.EBPF.DNSRequestTimeout <= 0 {
+		t.Errorf("DNSRequestTimeout = %v: unanswered DNS queries never expire", cfg.EBPF.DNSRequestTimeout)
+	}
 }
