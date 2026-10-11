@@ -56,10 +56,12 @@ func (t *sslTracer) UProbes() map[string]map[string][]*ebpfcommon.ProbeDesc {
 
 func (t *sslTracer) USDTProbes() map[string][]*ebpfcommon.USDTProbeDesc { return nil }
 
+const captureLRUMapMaxEntries = 4096
+
 func (t *httpGoTracer) LoadSpecs() ([]*ebpfcommon.SpecBundle, error) {
 	bundles, err := t.Tracer.LoadSpecs()
 	for _, bundle := range bundles {
-		limitNonHTTPMaps(bundle.Spec)
+		limitCaptureMaps(bundle.Spec)
 	}
 	return bundles, err
 }
@@ -67,9 +69,22 @@ func (t *httpGoTracer) LoadSpecs() ([]*ebpfcommon.SpecBundle, error) {
 func (t *sslTracer) LoadSpecs() ([]*ebpfcommon.SpecBundle, error) {
 	bundles, err := t.Tracer.LoadSpecs()
 	for _, bundle := range bundles {
-		limitNonHTTPMaps(bundle.Spec)
+		limitCaptureMaps(bundle.Spec)
 	}
 	return bundles, err
+}
+
+func limitCaptureMaps(spec *ebpf.CollectionSpec) {
+	limitNonHTTPMaps(spec)
+	capLRUMaps(spec)
+}
+
+func capLRUMaps(spec *ebpf.CollectionSpec) {
+	for _, m := range spec.Maps {
+		if m.Type == ebpf.LRUHash && m.Pinning != ebpf.PinByName && m.MaxEntries > captureLRUMapMaxEntries {
+			m.MaxEntries = captureLRUMapMaxEntries
+		}
+	}
 }
 
 func limitNonHTTPMaps(spec *ebpf.CollectionSpec) {

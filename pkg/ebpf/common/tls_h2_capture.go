@@ -60,6 +60,7 @@ type tlsH2Stream struct {
 	request, response   bool
 	reqEnd, respEnd     bool
 	method, path        string
+	authority           string
 	status              int
 	headers             http.Header
 }
@@ -282,7 +283,7 @@ func (c *tlsH2Capture) header(ctx *EBPFParseContext, direction uint8, id uint32,
 			return false
 		}
 		if !s.request {
-			s.method, s.path = d.header.Get(":method"), d.header.Get(":path")
+			s.method, s.path, s.authority = d.header.Get(":method"), d.header.Get(":path"), d.header.Get(":authority")
 			if s.method == "" {
 				return false
 			}
@@ -326,14 +327,12 @@ func (c *tlsH2Capture) complete(ctx *EBPFParseContext, id uint32, s *tlsH2Stream
 		return
 	}
 	delete(c.streams, id)
-	if len(s.headers) == 0 {
-		return
-	}
 	ctx.emitExtraSpans(request.Span{
 		Type: request.EventTypeHTTPClient, ProtoVersion: request.ProtoVersionHTTP2,
 		Pid: c.pid, Method: s.method, Path: s.path, Status: s.status,
+		Statement: "https" + request.SchemeHostSeparator + s.authority, RequestHeaders: s.headers,
 		Peer: net.IP(c.conn.S_addr[:]).String(), Host: net.IP(c.conn.D_addr[:]).String(),
 		PeerPort: int(c.conn.S_port), HostPort: int(c.conn.D_port),
-		RequestHeaders: s.headers, RequestMessageBytes: s.reqBytes, ResponseMessageBytes: s.respBytes,
+		RequestMessageBytes: s.reqBytes, ResponseMessageBytes: s.respBytes,
 	})
 }
