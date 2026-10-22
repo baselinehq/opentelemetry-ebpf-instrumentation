@@ -194,3 +194,38 @@ func TestTLSH2RejectsUnknownHPACKAndIncompleteStreams(t *testing.T) {
 	require.Empty(t, c.streams)
 	require.Empty(t, *spans)
 }
+
+func TestTLSH2GRPCStatusFromTrailers(t *testing.T) {
+	ctx, spans := h2CaptureContext(t)
+	c := newTLSH2Capture(&tlsH2Chunk{Generation: 1, HostPID: 42, Conn: goHTTPClientTestConnection()})
+	send, recv := newH2Writer(), newH2Writer()
+	send.wire.WriteString(http2.ClientPreface)
+	require.NoError(t, send.fr.WriteSettings())
+	send.headers(t, 1, false, false, ":method", "POST", ":path", "/grpc.health.v1.Health/Check", ":authority", "svc.internal:443", "content-type", "application/grpc")
+	require.NoError(t, send.fr.WriteData(1, true, []byte("req")))
+	// Stream 3 fails before any message: trailers-only HEADERS carry the gRPC status.
+	send.headers(t, 3, false, false, ":method", "POST", ":path", "/grpc.health.v1.Health/Check", ":authority", "svc.internal:443", "content-type", "application/grpc")
+	require.NoError(t, send.fr.WriteData(3, true, nil))
+
+	require.NoError(t, recv.fr.WriteSettings())
+	// Stream 1 answers HTTP 200 for every gRPC outcome; only the trailing
+	// grpc-status says the call failed.
+	recv.headers(t, 1, false, false, ":status", "200", "content-type", "application/grpc")
+	require.NoError(t, recv.fr.WriteData(1, false, []byte("resp")))
+	recv.headers(t, 1, true, false, "grpc-status", "5", "grpc-message", "not found")
+	recv.headers(t, 3, true, false, ":status", "200", "grpc-status", "13")
+
+	feedH2(t, ctx, c, directionSend, send.wire.Bytes(), 64)
+	feedH2(t, ctx, c, directionRecv, recv.wire.Bytes(), 64)
+
+	require.Len(t, *spans, 2)
+	got := map[int]request.Span{}
+	for _, s := range *spans {
+		require.Equal(t, request.EventTypeGRPCClient, s.Type)
+		require.Equal(t, "/grpc.health.v1.Health/Check", s.Path)
+		require.Equal(t, request.ProtoVersionHTTP2, s.ProtoVersion)
+		got[s.Status] = s
+	}
+	require.Equal(t, 5, got[5].Status)
+	require.Equal(t, 13, got[13].Status)
+}

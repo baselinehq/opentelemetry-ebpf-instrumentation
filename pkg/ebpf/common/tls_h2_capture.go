@@ -24,6 +24,10 @@ const (
 	h2CaptureHeaderLimit = 64 << 10
 	h2CaptureFrameLimit  = 1 << 20
 	h2CaptureStreamLimit = 512
+
+	// grpcStatusUnknown is the gRPC code for a failure the server reported
+	// without a grpc-status trailer, matching http2grpc_transform.go.
+	grpcStatusUnknown = 2
 )
 
 // Layout is asserted to be 72 bytes in both the BPF source and Go tests.
@@ -62,6 +66,8 @@ type tlsH2Stream struct {
 	method, path        string
 	authority           string
 	status              int
+	grpc                bool
+	grpcStatus          int
 	headers             http.Header
 }
 type tlsH2Capture struct {
@@ -315,6 +321,16 @@ func (c *tlsH2Capture) header(ctx *EBPFParseContext, direction uint8, id uint32,
 			return false
 		}
 		s.respEnd = d.endStream
+		if code := d.header.Get("grpc-status"); code != "" {
+			n, err := strconv.Atoi(code)
+			if err != nil {
+				return false
+			}
+			s.grpc, s.grpcStatus = true, n
+		} else if !s.grpc && d.header.Get("grpc-message") != "" {
+			// A grpc-message without grpc-status is a failure with an unset code.
+			s.grpc, s.grpcStatus = true, grpcStatusUnknown
+		}
 	}
 	d.continuation = 0
 	d.header = nil
@@ -327,9 +343,14 @@ func (c *tlsH2Capture) complete(ctx *EBPFParseContext, id uint32, s *tlsH2Stream
 		return
 	}
 	delete(c.streams, id)
+	spanType, status := request.EventTypeHTTPClient, s.status
+	if s.grpc {
+		// gRPC always answers HTTP 200; the outcome is the grpc-status trailer.
+		spanType, status = request.EventTypeGRPCClient, s.grpcStatus
+	}
 	ctx.emitExtraSpans(request.Span{
-		Type: request.EventTypeHTTPClient, ProtoVersion: request.ProtoVersionHTTP2,
-		Pid: c.pid, Method: s.method, Path: s.path, Status: s.status,
+		Type: spanType, ProtoVersion: request.ProtoVersionHTTP2,
+		Pid: c.pid, Method: s.method, Path: s.path, Status: status,
 		Statement: "https" + request.SchemeHostSeparator + s.authority, RequestHeaders: s.headers,
 		Peer: net.IP(c.conn.S_addr[:]).String(), Host: net.IP(c.conn.D_addr[:]).String(),
 		PeerPort: int(c.conn.S_port), HostPort: int(c.conn.D_port),
