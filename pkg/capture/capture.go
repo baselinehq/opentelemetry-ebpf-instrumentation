@@ -54,6 +54,7 @@ type Capture struct {
 	seen    map[inodeKey]*obiebpf.Instrumentable
 	allowed map[int32]allowedProcess
 	goTLS   map[executableID]bool
+	skip    map[executableID]struct{}
 
 	closeOnce sync.Once
 }
@@ -108,6 +109,7 @@ func New(opts Options) (*Capture, error) {
 		seen:    make(map[inodeKey]*obiebpf.Instrumentable),
 		allowed: make(map[int32]allowedProcess),
 		goTLS:   make(map[executableID]bool),
+		skip:    make(map[executableID]struct{}),
 	}, nil
 }
 
@@ -226,6 +228,11 @@ func (c *Capture) Scan() int {
 			delete(c.goTLS, id)
 		}
 	}
+	for id := range c.skip {
+		if _, ok := live[id]; !ok {
+			delete(c.skip, id)
+		}
+	}
 	allowedPIDs := len(c.allowed)
 	attachedInodes := len(c.seen)
 	slog.Debug("obicapture: procfs scan complete", "scanned", len(pids), "newly_attached", attached,
@@ -263,6 +270,9 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 	if inodeKnown && pidKnown && process.key == key {
 		return false, nil
 	}
+	if _, skipped := c.skip[id]; skipped {
+		return false, nil
+	}
 
 	var elfFile *elf.File
 	var inspector *goexec.Inspector
@@ -286,7 +296,12 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 		if err := openExecutable(); err != nil {
 			return false, err
 		}
-		return inspector.HasGoTLS()
+		hasGoTLS, err := inspector.HasGoTLS()
+		if err != nil {
+			slog.Debug("obicapture: go tls inspection failed; treating executable as without go tls", "exe", exePath, "error", err)
+			return false, nil
+		}
+		return hasGoTLS, nil
 	})
 	if flavor == tlsNone {
 		return false, nil
@@ -326,6 +341,7 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 		}
 		if offErr != nil {
 			slog.Debug("obicapture: crypto/tls present but offsets unreadable; skipping", "exe", exePath, "error", offErr)
+			c.skip[id] = struct{}{}
 			return false, nil
 		}
 		inst.Type = svc.InstrumentableGolang
