@@ -66,7 +66,7 @@ func TestExecutableIdentity(t *testing.T) {
 	}
 }
 
-func TestScanForgetsExitedExecutables(t *testing.T) {
+func TestScanKeepsExitedExecutablesBelowLimit(t *testing.T) {
 	proc := t.TempDir()
 	for _, pid := range []string{"1", "2"} {
 		if err := os.Mkdir(filepath.Join(proc, pid), 0o700); err != nil {
@@ -92,8 +92,8 @@ func TestScanForgetsExitedExecutables(t *testing.T) {
 		t.Fatal(err)
 	}
 	c.Scan()
-	if len(c.goTLS) != 0 {
-		t.Fatal("retained exited executable")
+	if len(c.goTLS) != 1 {
+		t.Fatal("forgot exited executable below the cache limit")
 	}
 }
 

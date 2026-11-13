@@ -42,6 +42,8 @@ const channelBufferLen = 100
 
 const maxCapturedBytes = 256 << 10
 
+const maxCachedExecutables = 1024
+
 type Capture struct {
 	procFS string
 
@@ -54,6 +56,7 @@ type Capture struct {
 	seen    map[inodeKey]*obiebpf.Instrumentable
 	allowed map[int32]allowedProcess
 	goTLS   map[executableID]bool
+	offsets map[executableID]*goexec.Offsets
 	skip    map[executableID]struct{}
 
 	closeOnce sync.Once
@@ -109,6 +112,7 @@ func New(opts Options) (*Capture, error) {
 		seen:    make(map[inodeKey]*obiebpf.Instrumentable),
 		allowed: make(map[int32]allowedProcess),
 		goTLS:   make(map[executableID]bool),
+		offsets: make(map[executableID]*goexec.Offsets),
 		skip:    make(map[executableID]struct{}),
 	}, nil
 }
@@ -223,16 +227,9 @@ func (c *Capture) Scan() int {
 			attached++
 		}
 	}
-	for id := range c.goTLS {
-		if _, ok := live[id]; !ok {
-			delete(c.goTLS, id)
-		}
-	}
-	for id := range c.skip {
-		if _, ok := live[id]; !ok {
-			delete(c.skip, id)
-		}
-	}
+	pruneStale(c.goTLS, live)
+	pruneStale(c.offsets, live)
+	pruneStale(c.skip, live)
 	allowedPIDs := len(c.allowed)
 	attachedInodes := len(c.seen)
 	slog.Debug("obicapture: procfs scan complete", "scanned", len(pids), "newly_attached", attached,
@@ -334,10 +331,16 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 	if flavor == tlsGo {
 		var offsets *goexec.Offsets
 		var offErr error
-		if inodeKnown {
+		switch cached, ok := c.offsets[id]; {
+		case inodeKnown:
 			offsets = existing.Offsets
-		} else {
+		case ok:
+			offsets = cached
+		default:
 			offsets, offErr = inspector.InspectHTTPOffsets(goFunctions(c.tracer))
+			if offErr == nil {
+				c.offsets[id] = offsets
+			}
 		}
 		if offErr != nil {
 			slog.Debug("obicapture: crypto/tls present but offsets unreadable; skipping", "exe", exePath, "error", offErr)
@@ -370,6 +373,17 @@ func (c *Capture) attachPID(pid int32, live map[executableID]struct{}) (bool, er
 	}
 	c.allowed[pid] = allowedProcess{key: key, ns: ns, start: processStartTime(c.procFS, uint32(pid))}
 	return !inodeKnown, nil
+}
+
+func pruneStale[V any](cache map[executableID]V, live map[executableID]struct{}) {
+	if len(cache) <= maxCachedExecutables {
+		return
+	}
+	for id := range cache {
+		if _, ok := live[id]; !ok {
+			delete(cache, id)
+		}
+	}
 }
 
 func goFunctions(tracer *obiebpf.ProcessTracer) []string {
