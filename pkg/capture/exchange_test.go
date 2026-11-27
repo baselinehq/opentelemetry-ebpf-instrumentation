@@ -33,7 +33,7 @@ func TestExchangePreservesIdentityHeadersAndMeasuredBytes(t *testing.T) {
 	}
 	s.Pid.HostPID = 42
 	got := mustExchange(t, &s)
-	if got.Kind != ExchangeHTTP || !got.Client || got.HostPID != 42 || got.SrcIP != s.Peer || got.DstIP != s.Host || got.DstPort != 443 ||
+	if got.Kind != ExchangeRequest || !got.Client || got.HostPID != 42 || got.SrcIP != s.Peer || got.DstIP != s.Host || got.DstPort != 443 ||
 		got.RequestMessageBytes != 215 || got.ResponseMessageBytes != 245 || got.RequestHeaders["x-example-owner"][0] != "team" {
 		t.Fatalf("exchange lost attribution inputs: %+v", got)
 	}
@@ -45,9 +45,9 @@ func TestExchangePreservesIdentityHeadersAndMeasuredBytes(t *testing.T) {
 	if mustExchange(t, &s).RequestMessageBytes != 0 {
 		t.Fatal("missing measured bytes must not fall back to body length")
 	}
-	s.Type, s.Statement = request.EventTypeSQLClient, "BEGIN;SELECT secret FROM users"
-	if got, ok := exchangeFromSpan(&s); ok {
-		t.Fatalf("database span became an http exchange: %+v", got)
+	s.Type, s.Method, s.Statement = request.EventTypeSQLClient, "BEGIN", "BEGIN;SELECT secret FROM users"
+	if got := mustExchange(t, &s); got.Protocol != ProtocolSQL || got.Operation != "BEGIN" || got.ServerAddress != "" {
+		t.Fatalf("database span leaked its statement: %+v", got)
 	}
 }
 

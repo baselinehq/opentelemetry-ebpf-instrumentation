@@ -6,6 +6,7 @@
 package capture // import "go.opentelemetry.io/obi/pkg/capture"
 
 import (
+	"cmp"
 	"context"
 	"debug/elf"
 	"fmt"
@@ -74,12 +75,18 @@ type Options struct {
 	ProcFSPath string
 
 	HeaderPrefixes []string
+
+	ProtocolMapEntries uint32
 }
+
+const DefaultProtocolMapEntries = 1024
 
 func New(opts Options) (*Capture, error) {
 	if opts.ProcFSPath == "" {
 		return nil, fmt.Errorf("obicapture: no procfs path")
 	}
+
+	protocolMapEntries := cmp.Or(opts.ProtocolMapEntries, DefaultProtocolMapEntries)
 
 	cfg, err := buildConfig(opts.HeaderPrefixes)
 	if err != nil {
@@ -92,8 +99,8 @@ func New(opts Options) (*Capture, error) {
 	pidFilter := ebpfcommon.NewPIDsFilter(discovery, slog.Default(), imetrics.NoopReporter{})
 
 	programs := []obiebpf.Tracer{
-		&httpGoTracer{gotracer.New(pidFilter, cfg, imetrics.NoopReporter{})},
-		&sslTracer{generictracer.New(pidFilter, cfg, imetrics.NoopReporter{})},
+		&captureGoTracer{gotracer.New(pidFilter, cfg, imetrics.NoopReporter{}), protocolMapEntries},
+		&sslTracer{generictracer.New(pidFilter, cfg, imetrics.NoopReporter{}), protocolMapEntries},
 	}
 
 	tracer := obiebpf.NewProcessTracer(obiebpf.Generic, programs, cfg, imetrics.NoopReporter{})

@@ -88,7 +88,7 @@ func mappedLibSSL(line string) (string, bool) {
 	if strings.HasSuffix(path, " (deleted)") {
 		return "", false
 	}
-	if !strings.HasPrefix(filepath.Base(path), "libssl.so") {
+	if base := filepath.Base(path); !strings.HasPrefix(base, libSSL) && !(strings.HasPrefix(base, vendoredLibSSL) && strings.Contains(base, ".so")) {
 		return "", false
 	}
 	return path, true
