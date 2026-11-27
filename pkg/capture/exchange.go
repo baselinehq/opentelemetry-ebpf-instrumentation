@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/netip"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/obi/pkg/appolly/app/request"
 	"go.opentelemetry.io/obi/pkg/ebpf/common/dnsparser"
@@ -18,11 +19,25 @@ import (
 type ExchangeKind uint8
 
 const (
-	ExchangeHTTP ExchangeKind = iota
+	ExchangeRequest ExchangeKind = iota
 	ExchangeDNS
 )
 
-// Exchange is an observed HTTP exchange. Headers follow Options.HeaderPrefixes.
+type Protocol string
+
+const (
+	ProtocolHTTP       Protocol = "http"
+	ProtocolGRPC       Protocol = "grpc"
+	ProtocolPostgreSQL Protocol = "postgresql"
+	ProtocolMySQL      Protocol = "mysql"
+	ProtocolMSSQL      Protocol = "mssql"
+	ProtocolSQL        Protocol = "sql"
+	ProtocolRedis      Protocol = "redis"
+	ProtocolKafka      Protocol = "kafka"
+	ProtocolMongoDB    Protocol = "mongodb"
+)
+
+// Exchange is an observed request or DNS answer. Headers follow Options.HeaderPrefixes.
 // Message bytes include HTTP framing and headers, excluding TLS overhead and
 // HTTP/2 connection-control frames. Zero means a complete size was not measured.
 // An exchange may be incomplete; consumers must check both sizes.
@@ -34,9 +49,13 @@ type Exchange struct {
 	DstIP                string
 	DstPort              int
 	ServerAddress        string
+	Protocol             Protocol
+	Operation            string
 	RequestHeaders       map[string][]string
 	RequestMessageBytes  int64
 	ResponseMessageBytes int64
+	Duration             time.Duration
+	Status               int
 	QueryName            string
 	Answers              []netip.Addr
 }
@@ -45,17 +64,50 @@ func exchangeFromSpan(s *request.Span) (Exchange, bool) {
 	switch s.Type {
 	case request.EventTypeDNS:
 		return dnsExchange(s)
-	case request.EventTypeHTTP, request.EventTypeHTTPClient, request.EventTypeGRPC, request.EventTypeGRPCClient:
-		return Exchange{
-			Kind: ExchangeHTTP, Client: s.IsClientSpan(), HostPID: uint32(s.Pid.HostPID),
-			SrcIP: s.Peer, DstIP: s.Host, DstPort: s.HostPort,
-			ServerAddress:        serverAddress(s.Statement),
-			RequestHeaders:       s.RequestHeaders,
-			RequestMessageBytes:  s.RequestMessageBytes,
-			ResponseMessageBytes: s.ResponseMessageBytes,
-		}, true
+	case request.EventTypeHTTP, request.EventTypeHTTPClient:
+		return httpExchange(s, ProtocolHTTP, s.Method), true
+	case request.EventTypeGRPC, request.EventTypeGRPCClient:
+		return httpExchange(s, ProtocolGRPC, ""), true
+	case request.EventTypeSQLClient, request.EventTypeSQLServer:
+		return requestExchange(s, sqlProtocol(s.SubType), s.Method), true
+	case request.EventTypeRedisClient, request.EventTypeRedisServer:
+		return requestExchange(s, ProtocolRedis, s.Method), true
+	case request.EventTypeKafkaClient, request.EventTypeKafkaServer:
+		return requestExchange(s, ProtocolKafka, s.Method), true
+	case request.EventTypeMongoClient:
+		return requestExchange(s, ProtocolMongoDB, s.Method), true
 	}
 	return Exchange{}, false
+}
+
+func sqlProtocol(kind int) Protocol {
+	switch request.SQLKind(kind) {
+	case request.DBPostgres:
+		return ProtocolPostgreSQL
+	case request.DBMySQL:
+		return ProtocolMySQL
+	case request.DBMSSQL:
+		return ProtocolMSSQL
+	}
+	return ProtocolSQL
+}
+
+func httpExchange(s *request.Span, protocol Protocol, operation string) Exchange {
+	exchange := requestExchange(s, protocol, operation)
+	exchange.ServerAddress = serverAddress(s.Statement)
+	return exchange
+}
+
+func requestExchange(s *request.Span, protocol Protocol, operation string) Exchange {
+	return Exchange{
+		Kind: ExchangeRequest, Protocol: protocol, Operation: operation, Client: s.IsClientSpan(), HostPID: uint32(s.Pid.HostPID),
+		SrcIP: s.Peer, DstIP: s.Host, DstPort: s.HostPort,
+		RequestHeaders:       s.RequestHeaders,
+		RequestMessageBytes:  s.RequestMessageBytes,
+		ResponseMessageBytes: s.ResponseMessageBytes,
+		Duration:             time.Duration(s.End - s.RequestStart),
+		Status:               s.Status,
+	}
 }
 
 func dnsExchange(s *request.Span) (Exchange, bool) {

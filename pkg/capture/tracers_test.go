@@ -15,14 +15,14 @@ import (
 	"go.opentelemetry.io/obi/pkg/internal/ebpf/gotracer"
 )
 
-func TestHTTPProbeSelection(t *testing.T) {
-	for _, symbol := range []string{"crypto/tls.(*Conn).Read", "net.(*netFD).Close", "net/http.(*Transport).roundTrip", "runtime.newproc1", "net/http/internal/http2.(*ClientConn).RoundTrip"} {
-		if !httpGoFunction(symbol) {
-			t.Errorf("missing required HTTP probe %s", symbol)
+func TestCaptureProbeSelection(t *testing.T) {
+	for _, symbol := range []string{"crypto/tls.(*Conn).Read", "net.(*netFD).Close", "net/http.(*Transport).roundTrip", "runtime.newproc1", "net/http/internal/http2.(*ClientConn).RoundTrip", "database/sql.(*DB).queryDC", "github.com/jackc/pgx/v5.(*Conn).Query", "github.com/redis/go-redis/v9.(*baseClient)._process"} {
+		if !captureGoFunction(symbol) {
+			t.Errorf("missing required capture probe %s", symbol)
 		}
 	}
-	for _, symbol := range []string{"database/sql.(*DB).queryDC", "github.com/jackc/pgx/v5.(*Conn).Query", "runtime.mallocgc", "github.com/redis/go-redis/v9.(*Client).Process"} {
-		if httpGoFunction(symbol) {
+	for _, symbol := range []string{"runtime.mallocgc", "github.com/gin-gonic/gin.(*Engine).handleHTTPRequest", "google.golang.org/grpc.(*Server).handleStream"} {
+		if captureGoFunction(symbol) {
 			t.Errorf("unrelated probe %s", symbol)
 		}
 	}
@@ -37,7 +37,7 @@ func TestCaptureMapSizes(t *testing.T) {
 				t.Fatal(err)
 			}
 			before := spec.Copy()
-			limitCaptureMaps(spec)
+			limitCaptureMaps(spec, DefaultProtocolMapEntries)
 			var saved, capacity uint64
 			for name, m := range spec.Maps {
 				original := before.Maps[name]
@@ -45,7 +45,8 @@ func TestCaptureMapSizes(t *testing.T) {
 				if m.MaxEntries == original.MaxEntries {
 					continue
 				}
-				trimmed := m.MaxEntries == 1 && (m.Type == ebpf.Hash || m.Type == ebpf.LRUHash)
+				_, protocol := protocolMaps[name]
+				trimmed := (m.MaxEntries == 1 || protocol && m.MaxEntries == DefaultProtocolMapEntries) && (m.Type == ebpf.Hash || m.Type == ebpf.LRUHash)
 				capped := m.MaxEntries == captureLRUMapMaxEntries && m.Type == ebpf.LRUHash && m.Pinning != ebpf.PinByName
 				if !trimmed && !capped {
 					t.Fatalf("unexpected change to %s", name)
