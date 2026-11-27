@@ -58,14 +58,14 @@ type sslTracer struct {
 	protocolMapEntries uint32
 }
 
+const (
+	libSSL         = "libssl.so"
+	vendoredLibSSL = "libssl-"
+)
+
 func (t *sslTracer) UProbes() map[string]map[string][]*ebpfcommon.ProbeDesc {
-	probes := t.Tracer.UProbes()
-	for library := range probes {
-		if library != "libssl.so" {
-			delete(probes, library)
-		}
-	}
-	return probes
+	ssl := t.Tracer.UProbes()[libSSL]
+	return map[string]map[string][]*ebpfcommon.ProbeDesc{libSSL: ssl, vendoredLibSSL: ssl}
 }
 
 func (t *sslTracer) USDTProbes() map[string][]*ebpfcommon.USDTProbeDesc { return nil }
