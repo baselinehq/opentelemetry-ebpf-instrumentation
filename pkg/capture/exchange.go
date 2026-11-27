@@ -73,11 +73,21 @@ func exchangeFromSpan(s *request.Span) (Exchange, bool) {
 	case request.EventTypeRedisClient, request.EventTypeRedisServer:
 		return requestExchange(s, ProtocolRedis, s.Method), true
 	case request.EventTypeKafkaClient, request.EventTypeKafkaServer:
-		return requestExchange(s, ProtocolKafka, s.Method), true
+		return requestExchange(s, ProtocolKafka, kafkaOperation(s.Method)), true
 	case request.EventTypeMongoClient:
 		return requestExchange(s, ProtocolMongoDB, s.Method), true
 	}
 	return Exchange{}, false
+}
+
+func kafkaOperation(method string) string {
+	switch method {
+	case request.MessagingSend, request.MessagingPublish:
+		return "produce"
+	case request.MessagingProcess:
+		return "fetch"
+	}
+	return method
 }
 
 func sqlProtocol(kind int) Protocol {
